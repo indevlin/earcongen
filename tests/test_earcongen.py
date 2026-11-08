@@ -1,9 +1,4 @@
-"""Tests for the generator itself.
-
-The golden-hash test is the important one. Everything else here would
-survive a change that quietly altered every sound the tool has ever
-produced; that test would not.
-"""
+"""Tests for the generator."""
 
 from __future__ import annotations
 
@@ -31,17 +26,10 @@ def render(tmp_path: Path, argv: list[str]) -> Path:
     return out
 
 
-# --------------------------------------------------------------------------
 # Golden output
-# --------------------------------------------------------------------------
 
-#: SHA-256 of every file the default invocation produces.
-#:
-#: These exist so that a change to the synthesis path cannot silently move
-#: the sound of the default family. Anyone who deliberately changes the
-#: defaults should update these in the same commit and say so in the
-#: changelog — a family that shifts under an application already shipping
-#: it is a compatibility break, whatever the version number says.
+#: SHA-256 of every file the default invocation produces. A deliberate
+#: change to the defaults updates these and the changelog together.
 DEFAULT_FAMILY_SHA256 = {
     "earcon01.wav": "053128c695befdef05080faee55ddcde642188cfbe270af58f1a5a85403f85a4",
     "earcon02.wav": "4a376e677590be59c659e7716e790a19d6f565e6a5c384cd79a26b17206f2c47",
@@ -63,9 +51,7 @@ def test_default_family_is_unchanged(tmp_path):
     assert actual == DEFAULT_FAMILY_SHA256
 
 
-# --------------------------------------------------------------------------
 # Families
-# --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("family", earcongen.FAMILY_NAMES)
 def test_every_family_renders(tmp_path, family):
@@ -90,15 +76,13 @@ def test_every_contour_referenced_by_a_family_exists():
             assert spec.contour in earcongen.CONTOURS, (name, spec.slug)
 
 
-# --------------------------------------------------------------------------
 # Note count
-# --------------------------------------------------------------------------
 
 def test_note_count_truncates_rather_than_redesigning():
     spec = earcongen.EarconSpec("x", "rise3")
     assert earcongen.capped_contour(spec, 2) == earcongen.CONTOURS["rise3"][:2]
     assert earcongen.capped_contour(spec, None) == earcongen.CONTOURS["rise3"]
-    # A cap longer than the contour is not an error, just a no-op.
+    # A cap longer than the contour is a no-op.
     assert earcongen.capped_contour(spec, 9) == earcongen.CONTOURS["rise3"]
 
 
@@ -132,9 +116,7 @@ def test_capped_family_produces_shorter_files(tmp_path):
     assert duration(short_out / "earcon01.wav") < duration(long_out / "earcon01.wav")
 
 
-# --------------------------------------------------------------------------
 # Presets
-# --------------------------------------------------------------------------
 
 def test_preset_fills_in_unset_options():
     parser = earcongen.build_parser()
@@ -155,12 +137,8 @@ def test_explicit_flag_beats_the_preset():
 
 
 def test_explicit_flag_set_to_its_own_default_still_wins():
-    """The reason presets compare against argv rather than against values.
-
-    `--gap-ms 95` is what the r2 preset would set anyway, so a
-    value-comparison approach cannot tell it apart from "not given" — and
-    would then be free to overwrite it with something else later.
-    """
+    """`--gap-ms 95` is what the r2 preset sets anyway, so comparing
+    values could not tell it from unset."""
     parser = earcongen.build_parser()
     argv = ["--r2", "--gap-ms", "95"]
     args = parser.parse_args(argv)
@@ -177,12 +155,10 @@ def test_preset_voices_exist():
         assert cfg["family"] in earcongen.FAMILY_NAMES, name
 
 
-# --------------------------------------------------------------------------
 # Modulation
-# --------------------------------------------------------------------------
 
 def test_modulation_is_off_on_every_classic_voice():
-    """The guarantee behind the unchanged golden hashes."""
+    """Modulation defaults to zero on every non-droid voice."""
     for name in ("bell", "chime", "marimba", "glass", "pluck", "alert",
                  "alarm", "sine"):
         voice = earcongen.VOICES[name]
@@ -194,8 +170,7 @@ def test_modulation_is_off_on_every_classic_voice():
 
 
 def test_constant_pitch_takes_the_closed_form_path():
-    """freq_track returns None when nothing modulates, which is what keeps
-    the pre-existing voices bit-identical."""
+    """freq_track returns None when nothing modulates."""
     import numpy as np
 
     voice = earcongen.VOICES["chime"]
@@ -210,7 +185,7 @@ def test_constant_pitch_takes_the_closed_form_path():
 
 
 def test_droid_output_is_finite_and_bounded(tmp_path):
-    """Ring modulation and noise are the two easy ways to produce NaN."""
+    """Ring modulation and noise must not produce NaN or clipping."""
     import numpy as np
 
     out = render(tmp_path, ["--r2-full"])
@@ -222,12 +197,10 @@ def test_droid_output_is_finite_and_bounded(tmp_path):
         assert np.max(np.abs(data)) < 32768
 
 
-# --------------------------------------------------------------------------
 # Spec files
-# --------------------------------------------------------------------------
 
 def test_spec_without_note_count_still_loads(tmp_path):
-    """Spec files written before the note cap existed must keep working."""
+    """A spec file without note_count must still load."""
     spec = tmp_path / "legacy.json"
     spec.write_text(
         '[{"slug":"legacy","contour":"rise3","root_offset":0,'
@@ -257,20 +230,15 @@ def test_dump_spec_follows_the_family_flag():
 
 
 def test_every_voice_has_matching_partial_tables():
-    """ratios, amps and decays are zipped strictly, so a voice whose
-    tables disagree raises at render time rather than quietly dropping a
-    partial. This catches it at import time instead."""
+    """render_note zips these strictly, so mismatched lengths raise."""
     for name, voice in earcongen.VOICES.items():
         assert len(voice.ratios) == len(voice.amps) == len(voice.decays), name
 
 
-# --------------------------------------------------------------------------
-# Shortening properly: reductions and register separation
-# --------------------------------------------------------------------------
+# Reductions and register separation
 
 def test_every_contour_has_a_character():
-    """The character decides which way a nudged cue moves. A contour
-    missing from the table would silently be treated as level."""
+    """A contour missing from the table would default to level."""
     assert set(earcongen.CONTOUR_CHARACTER) == set(earcongen.CONTOURS)
 
 
@@ -288,8 +256,7 @@ def test_reductions_are_the_length_they_claim():
 
 
 def test_reductions_preserve_direction():
-    """A shortened rising cue must still rise, or the cap has changed what
-    the cue means rather than only how long it takes to say it."""
+    """Reductions must preserve each contour's direction."""
     for name, table in earcongen.REDUCTIONS.items():
         character = earcongen.CONTOUR_CHARACTER[name]
         for degrees in table.values():
@@ -321,8 +288,7 @@ def test_one_note_is_always_a_single_note():
 
 
 def test_uncapped_planning_changes_nothing():
-    """The guarantee behind the golden hashes: with no cap, plan_family is
-    the identity and cannot move anything."""
+    """Without a cap, plan_family is the identity."""
     for family in earcongen.FAMILY_NAMES:
         specs = earcongen.resolve_family(family)
         for plan in earcongen.plan_family(specs, None):
@@ -332,8 +298,7 @@ def test_uncapped_planning_changes_nothing():
 
 
 def test_nudged_cues_move_in_their_own_direction():
-    """A rising cue that has to give way ends up higher, not merely
-    elsewhere."""
+    """A displaced rising cue moves up; a falling one moves down."""
     specs = [
         earcongen.EarconSpec("a", "rise2", 0),
         earcongen.EarconSpec("b", "rise2", 0),
@@ -348,9 +313,8 @@ def test_nudged_cues_move_in_their_own_direction():
 
 
 def test_separation_never_pushes_a_cue_out_of_band():
-    """fit_to_range gives up after six octave shifts, so a far enough
-    register comes back out of band. Those look distinct and are exactly
-    the shrillness the band exists to prevent."""
+    """fit_to_range stops after six shifts, so a far enough register
+    returns unfolded and out of band."""
     pitch = earcongen.PitchContext(523.25, earcongen.SCALES["major_pent"],
                                    480.0, 1150.0)
     for family in earcongen.FAMILY_NAMES:
@@ -362,9 +326,8 @@ def test_separation_never_pushes_a_cue_out_of_band():
 
 
 def test_band_capacity_is_the_real_limit():
-    """Six distinguishable pitches in the default band, because a
-    pentatonic has five per octave and the band is barely wider than
-    one. This is why an eight-cue family cannot survive -n 1."""
+    """A pentatonic has five notes per octave and the default band spans
+    barely one, giving six distinct pitches."""
     pitch = earcongen.PitchContext(523.25, earcongen.SCALES["major_pent"],
                                    480.0, 1150.0)
     assert earcongen.distinct_pitch_capacity(pitch) == 6
@@ -385,8 +348,7 @@ def test_exhausted_band_is_reported_not_hidden():
 
 
 def test_redesign_beats_truncation_on_real_audio(tmp_path):
-    """The point of the whole exercise, measured on the files themselves
-    rather than on the plan."""
+    """Measured on the rendered files, not on the plan."""
     def distinct(argv):
         out = render(tmp_path / "-".join(argv).replace("-", "_"), argv)
         return len({hashlib.sha256(p.read_bytes()).digest()

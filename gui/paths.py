@@ -1,13 +1,4 @@
-"""Platform-aware filesystem locations and version resolution.
-
-earcongen writes audio somewhere the user will look for it and remembers
-its own settings somewhere the user will never have to. Both of those
-locations differ per platform, and neither is guessable from `Path.home()`
-alone.
-
-Everything here is read at start-up and again whenever the user changes
-the output directory, so it stays cheap.
-"""
+"""Platform-aware filesystem locations and version resolution."""
 
 from __future__ import annotations
 
@@ -18,28 +9,21 @@ from pathlib import Path
 
 APP_NAME = "earcongen"
 
-#: Directory name created under the chosen output base for each run.
-#: Keeping generated audio in a named subfolder means pointing the tool at
-#: Documents does not scatter thirty WAVs across it.
+#: Subdirectory created under the chosen output base.
 DEFAULT_OUTPUT_DIRNAME = "earcons"
 
-#: Dropped beside a frozen binary to keep settings and output next to the
-#: executable rather than in the user profile — the usual arrangement for
-#: a tool carried on a USB stick between machines.
+#: Placed beside a frozen binary to keep settings and output next to the
+#: executable instead of in the user profile.
 PORTABLE_MARKER = "earcongen-portable.txt"
 
 
 def is_frozen() -> bool:
-    """Whether we are running from a PyInstaller bundle."""
+    """Whether this is running from a PyInstaller bundle."""
     return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
 
 def resource_root() -> Path:
-    """Where bundled data files live.
-
-    Frozen, that is PyInstaller's extraction directory. From a checkout,
-    it is the repository root — this file's parent's parent.
-    """
+    """PyInstaller's extraction directory, or the repository root."""
     if is_frozen():
         return Path(sys._MEIPASS)  # type: ignore[attr-defined]
     return Path(__file__).resolve().parent.parent
@@ -61,12 +45,10 @@ def is_portable() -> bool:
 
 
 def read_version() -> str:
-    """The contents of the `version` file, or a placeholder.
+    """Read the `version` file, or return "0".
 
-    Versions are bare YYYYMMDD datestamps. The file is bundled into the
-    binary by packaging/build_common.py so a frozen build can report the
-    same string the release was tagged with; the release workflow's smoke
-    test compares the two.
+    Bundled into the binary by packaging/build_common.py, so a frozen
+    build reports the datestamp it was tagged with.
     """
     for candidate in (resource_root() / "version", binary_dir() / "version"):
         try:
@@ -79,8 +61,7 @@ def read_version() -> str:
 
 
 def _windows_documents() -> Path:
-    # USERPROFILE is set on every supported Windows version; the fallback
-    # is for the stripped environments CI sometimes provides.
+    # The fallback covers stripped CI environments.
     profile = os.environ.get("USERPROFILE")
     base = Path(profile) if profile else Path.home()
     return base / "Documents"
@@ -92,12 +73,8 @@ def _windows_appdata() -> Path:
 
 
 def config_dir() -> Path:
-    """Where the GUI remembers its settings.
-
-    Linux honours XDG_CONFIG_HOME, because a user who has set it has said
-    where they want this. Windows uses Roaming AppData and macOS uses
-    Application Support, which is where each platform's users look.
-    """
+    """Settings directory: Roaming AppData, Application Support, or
+    $XDG_CONFIG_HOME."""
     if is_portable():
         return binary_dir() / "config"
     if sys.platform == "win32":
@@ -115,12 +92,11 @@ def settings_file() -> Path:
 
 
 def default_output_base() -> Path:
-    """The output directory offered on a first run.
+    """Output base offered on a first run.
 
-    Documents on Windows and macOS. On Linux, XDG_DOCUMENTS_DIR if the
-    user has one and it exists, otherwise ~/Music, which is where a
-    freedesktop system will already have a folder — falling back to the
-    home directory only if neither is there.
+    Documents on Windows and macOS; on Linux $XDG_DOCUMENTS_DIR if set
+    and present, then ~/Documents, ~/Music, and finally the home
+    directory.
     """
     if is_portable():
         return binary_dir() / DEFAULT_OUTPUT_DIRNAME
@@ -141,11 +117,10 @@ def default_output_base() -> Path:
 
 
 def reveal(path: Path) -> bool:
-    """Open a directory in the platform's file manager.
+    """Open a directory in the platform file manager.
 
-    Returns False rather than raising: not being able to open a file
-    manager is a mild disappointment, not an error worth a dialog. A
-    headless Linux box legitimately has no file manager at all.
+    Returns False instead of raising; a headless host has no file
+    manager to open.
     """
     target = path if path.is_dir() else path.parent
     try:
@@ -153,8 +128,8 @@ def reveal(path: Path) -> bool:
             os.startfile(str(target))  # type: ignore[attr-defined]
             return True
         command = ["open"] if sys.platform == "darwin" else ["xdg-open"]
-        # Detached: a file manager launched here must not die with us, and
-        # its chatter must not land in our stdout.
+        # Detached, so the file manager outlives this process and its
+        # output stays out of our streams.
         subprocess.Popen(
             command + [str(target)],
             stdout=subprocess.DEVNULL,

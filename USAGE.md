@@ -188,7 +188,7 @@ audio downstream. Generating at 0.99 leaves nothing for the host.
 | `--notes` | the design reasoning, condensed |
 | `--spec FILE` | use a family definition from JSON |
 | `--preset NAME` | apply a named bundle of options |
-| `--r2`, `--r2-full` | shorthand for the astromech presets |
+| `--r2`, `--r2-full` | shorthand for the droid presets |
 
 A preset only sets options you did not set yourself, so `--r2 --voice
 marimba` keeps the droid phrasing and takes the marimba timbre. This is

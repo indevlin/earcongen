@@ -1,8 +1,7 @@
 """Graphical front end for earcongen.
 
-Kept as a package beside the scripts rather than inside them: earcongen.py
-and earconcheck.py remain single-file, dependency-light tools that run
-with numpy alone, and nothing here is imported unless the GUI is started.
+Nothing here is imported unless the GUI starts, so earcongen.py and
+earconcheck.py keep numpy as their only dependency.
 """
 
 from __future__ import annotations

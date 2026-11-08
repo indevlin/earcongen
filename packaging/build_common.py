@@ -1,33 +1,12 @@
-"""Shared PyInstaller configuration for the earcongen binary.
+"""Shared PyInstaller configuration, imported by ``earcongen.spec``.
 
-Imported by ``earcongen.spec`` so the build settings live somewhere a
-human can read them rather than buried in a generated spec.
+QT_EXCLUDES drops the Qt modules the GUI never loads, which roughly
+halves the binary. QtMultimedia is kept: it is the in-window playback
+backend. numpy is a runtime dependency and must never be excluded.
 
-On excluding Qt modules
------------------------
-PySide6 ships a very large surface: WebEngine alone is hundreds of
-megabytes. The GUI uses QtCore, QtGui, QtWidgets and QtMultimedia and
-nothing else, so everything else is excluded explicitly. This is a size
-decision, not a licensing one.
-
-QtMultimedia is deliberately *not* excluded. It is what plays a cue back
-inside the window, which is half the point of having a window; without it
-every audition falls back to shelling out to whatever player the machine
-happens to have.
-
-On numpy
---------
-Unlike the ED tools, numpy is a genuine runtime dependency here — it is
-the synthesis engine — so it must not be excluded. Adding it to the
-exclude list produces a binary that starts and then fails on the first
-render, which is a slow way to discover the mistake.
-
-On the Qt licence
------------------
 Qt is LGPL v3 and is never statically linked; PyInstaller bundles it as
-ordinary shared libraries loaded at runtime. The licence texts are added
-to DATA_FILES below so a copy travels inside every binary, and the
-relinking requirement is met by publishing the complete source.
+shared libraries loaded at runtime. DATA_FILES carries the licence texts
+into every binary.
 """
 
 from __future__ import annotations
@@ -39,9 +18,8 @@ from pathlib import Path
 #: spec imports, so it cannot be relied on here.
 ROOT = Path(__file__).resolve().parent.parent
 
-#: The version file is bundled so a frozen binary can report its version.
-#: The release workflow's smoke test compares what it prints against the
-#: tag, so this entry is load-bearing rather than cosmetic.
+#: Bundled so a frozen binary can report its version. The release
+#: workflow's smoke test compares that output against the tag.
 VERSION_FILE = ROOT / "version"
 
 #: Files shipped alongside the code inside the bundle.
@@ -52,7 +30,7 @@ DATA_FILES = [
     (str(ROOT / "licenses"), "licenses"),
 ]
 
-#: Qt modules earcongen never touches.
+#: Qt modules the GUI never loads.
 QT_EXCLUDES = [
     "PySide6.Qt3DAnimation",
     "PySide6.Qt3DCore",
@@ -94,8 +72,8 @@ QT_EXCLUDES = [
     "PySide6.QtWebSockets",
 ]
 
-#: Heavyweight packages that may be present in a build environment but
-#: are never imported. numpy is conspicuously absent: it is required.
+#: Packages that may exist in the build environment but are never
+#: imported. numpy is excluded from this list: it is required.
 OTHER_EXCLUDES = [
     "IPython",
     "matplotlib",
@@ -107,9 +85,8 @@ OTHER_EXCLUDES = [
 
 EXCLUDES = QT_EXCLUDES + OTHER_EXCLUDES
 
-#: earcongui imports these through the package, which static analysis
-#: follows, but naming them makes a missing module a build error rather
-#: than a crash on first use.
+#: Named explicitly so a missing module fails the build rather than the
+#: first run.
 HIDDEN_IMPORTS = [
     "earcongen",
     "gui.app",
@@ -126,8 +103,7 @@ def analysis_kwargs(entry_point: str = "earcongui.py") -> dict:
     """Keyword arguments for a PyInstaller ``Analysis``."""
     return {
         "scripts": [str(ROOT / entry_point)],
-        # The repository root, because earcongen.py sits there as a
-        # top-level module rather than inside a package.
+        # Repository root: earcongen.py is a top-level module.
         "pathex": [str(ROOT)],
         "binaries": [],
         "datas": DATA_FILES,

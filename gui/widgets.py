@@ -1,13 +1,8 @@
 """Controls built from the metadata in params.py.
 
-Each control owns one setting, exposes it as ``value`` (None where the
-parameter is optional and switched off), and emits ``changed`` when the
-user moves it. Nothing here knows what a preset is or how audio is
-rendered; the window wires that up.
-
-Every control carries the parameter's tooltip on every one of its child
-widgets, because a tooltip on the label only is a tooltip most people
-never find.
+Each control owns one setting, exposes it as ``value`` -- None where the
+parameter is optional and switched off -- and emits ``changed`` on edit.
+The parameter tooltip is set on every child widget, not just the label.
 """
 
 from __future__ import annotations
@@ -27,8 +22,7 @@ from PySide6.QtWidgets import (
 
 from .params import Param
 
-#: Width reserved for the label column, so every control in the window
-#: lines up regardless of which group it sits in.
+#: Fixed label column width, so controls align across groups.
 LABEL_WIDTH = 132
 
 #: Width of the numeric entry beside each slider.
@@ -36,7 +30,7 @@ ENTRY_WIDTH = 118
 
 
 class ControlBase(QWidget):
-    """Common plumbing: a label, a tooltip, and a lock."""
+    """Label, tooltip and lock state shared by every control."""
 
     changed = Signal()
 
@@ -59,19 +53,13 @@ class ControlBase(QWidget):
         self.label.setToolTip(param.tooltip)
 
     def set_locked(self, locked: bool) -> None:
-        """Show the value but refuse edits.
-
-        Locking rather than hiding is the point of the preset mode: the
-        user is meant to see exactly which settings a preset moved and
-        where it put them.
-        """
+        """Disable editing while leaving the value visible."""
         self._locked = locked
         self._apply_enabled()
 
     def _apply_enabled(self) -> None:  # pragma: no cover - overridden
         pass
 
-    # -- interface used by the window ------------------------------------
     @property
     def value(self):  # pragma: no cover - overridden
         raise NotImplementedError
@@ -81,12 +69,11 @@ class ControlBase(QWidget):
 
 
 class NumberControl(ControlBase):
-    """A slider and a spin box over the same value, optionally switchable.
+    """A slider and a spin box over one value, optionally switchable.
 
-    The slider works in units of the parameter's step, which keeps its
-    integer range small and makes every notch a value the spin box can
-    represent exactly. The two are kept in sync with signals blocked, so
-    neither can drive the other into a loop.
+    The slider counts in units of the parameter's step, so every notch is
+    exactly representable in the spin box. The two are synchronised with
+    signals blocked to avoid a feedback loop.
     """
 
     def __init__(self, param: Param, parent: QWidget | None = None) -> None:
@@ -191,9 +178,8 @@ class NumberControl(ControlBase):
             self.toggle.setChecked(True)
             self.toggle.blockSignals(False)
 
-        # Clamped rather than rejected: a preset may legitimately sit
-        # outside a slider's comfortable range, and silently refusing to
-        # show the value it set would be worse than showing it pinned.
+        # Clamped, not rejected: a preset may set a value outside the
+        # slider bounds, and it still has to be displayed.
         numeric = max(self.param.minimum, min(self.param.maximum, float(value)))
         self.spin.blockSignals(True)
         self.slider.blockSignals(True)
@@ -268,9 +254,8 @@ class BoolControl(ControlBase):
         self.box.setChecked(bool(param.default))
         self.box.toggled.connect(lambda _: self.changed.emit())
 
-        # The checkbox carries its own text, so the label column would be
-        # a duplicate. It stays in the layout as a spacer to keep this row
-        # aligned with every other row.
+        # The checkbox carries its own text; the empty label remains as
+        # a spacer so the row stays aligned with the others.
         self.label.setText("")
         self.row.addWidget(self.box, 1)
 
@@ -290,7 +275,7 @@ class BoolControl(ControlBase):
 
 
 def build_control(param: Param, blurbs: dict[str, str] | None = None) -> ControlBase:
-    """The right control for a parameter's kind."""
+    """Construct the control matching `param.kind`."""
     if param.kind == "choice":
         return ChoiceControl(param, blurbs)
     if param.kind == "bool":

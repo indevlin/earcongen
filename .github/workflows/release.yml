@@ -1,19 +1,16 @@
 name: Release
 
-# One single-file GUI binary for three operating systems. The LGPL relinking
-# requirement for Qt is satisfied under LGPLv3 section 4(d)(1): the complete
-# application source is public, the build spec lives in packaging/, and PySide6
-# is a pip install away, so anyone can regenerate these binaries against their
-# own build of Qt. The licence texts in licenses/ ship inside every archive.
+# Builds one single-file GUI binary per operating system.
 #
-# The command-line tools are not frozen. They need numpy alone, and travel
-# inside each archive as source, so the project is usable without the binary.
+# LGPLv3 4(d)(1) is satisfied by publishing the complete source and the
+# build spec in packaging/; licenses/ ships inside every archive, as
+# 4(b) requires. Only the GUI is frozen; the command-line tools travel
+# in each archive as source.
 
 on:
   push:
-    # Tags are bare YYYYMMDD datestamps with no "v" prefix, so the filter
-    # matches any tag starting with a digit. The verify job below is what
-    # actually rejects a tag that does not match the version file.
+    # Bare YYYYMMDD datestamps, no "v" prefix. The verify job rejects a
+    # tag that does not match the version file.
     tags: ["[0-9]*"]
   workflow_dispatch:
     inputs:
@@ -37,7 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Versions are YYYYMMDD datestamps; see CHANGELOG.md.
       - id: read
         name: Read and check the version
         shell: bash
@@ -82,17 +78,15 @@ jobs:
       - name: Lint
         run: ruff check .
 
-      # The GUI tests build real widgets, so they need a platform plugin.
-      # offscreen is enough and is faster than xvfb.
+      # The GUI tests build real widgets, so they need a platform
+      # plugin; offscreen needs no display.
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest -q tests
 
-      # Every generated cue is checked for the defects that are easy to
-      # introduce and impossible to hear in a diff. The droid families are
-      # ring-modulated, whose envelope nulls are deliberate, so they are
-      # checked with the looser limit.
+      # Droid output is ring-modulated, so its envelope nulls need the
+      # looser --modulated limit.
       - name: Generate and check every family
         run: |
           set -euo pipefail
@@ -121,12 +115,9 @@ jobs:
           - os: macos-latest
             platform: macos-arm64
 
-    # Job-level environment. The signing secrets are declared here, not
-    # inside the steps that use them: a step's own `env:` block is not
-    # available to that step's `if:`, which GitHub evaluates first, so a
-    # step-level reference makes the condition always false and signing
-    # skips silently on a correctly configured repository. That failure is
-    # invisible — the build succeeds and ships unsigned.
+    # Signing secrets must be declared at job level: a step's own `env:`
+    # is not available to that step's `if:`, so a step-level reference
+    # evaluates false and signing is skipped without any error.
     env:
       BINARY: EarconGen
       WINDOWS_CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
@@ -162,12 +153,8 @@ jobs:
       - name: Build single-file binary
         run: pyinstaller packaging/earcongen.spec --noconfirm --clean
 
-      # ----------------------------------------------------------------- #
-      # Code signing. The secrets come from the job-level env block above;
-      # see the note there for why. Every step is skipped when its secret
-      # is absent, so forks build successfully with no credentials
-      # configured at all.
-      # ----------------------------------------------------------------- #
+      # Code signing. Each step is skipped when its secret is absent, so
+      # a fork builds with no credentials configured.
 
       - name: Sign Windows binary
         if: runner.os == 'Windows' && env.WINDOWS_CERT != ''
@@ -201,9 +188,9 @@ jobs:
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
 
-          # Hardened runtime is required for notarisation. Qt loads its
-          # plugins at runtime, so the JIT and unsigned-memory entitlements
-          # must be granted or the app is killed on launch.
+          # Notarisation requires the hardened runtime. Qt loads plugins
+          # at runtime, so the JIT and unsigned-memory entitlements are
+          # required or the app is killed at launch.
           codesign --force --deep --options runtime --timestamp \
             --entitlements packaging/entitlements.plist \
             --sign "$MACOS_SIGN_IDENTITY" "dist/${BINARY}.app"
@@ -220,13 +207,8 @@ jobs:
           security delete-keychain "$KEYCHAIN"
           rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/notarize.zip"
 
-      # ----------------------------------------------------------------- #
-      # Smoke test: prove the artefact actually starts. A binary that
-      # builds but cannot import its own modules is the failure mode this
-      # catches, and it is easy to ship without this step.
-      #
-      # --cli version never imports Qt, so no display is needed anywhere.
-      # ----------------------------------------------------------------- #
+      # Smoke test: catches a binary that builds but cannot import its
+      # own modules. --cli version never imports Qt, so needs no display.
 
       - name: Smoke-test the binary (Linux and macOS)
         if: runner.os != 'Windows'
@@ -239,15 +221,10 @@ jobs:
           test -n "$ACTUAL" || { echo "::error::No output from the binary."; exit 1; }
           test "$ACTUAL" = "$EXPECTED"
 
-      # The Windows binary is built windowed, so it starts with no console.
-      # gui/win_console.py reattaches stdout for --cli; this step is what
-      # proves it still works.
-      #
-      # Two ways of capturing are tried before giving up. Piping is the
-      # normal path, but it depends on the console attachment behaving, and
-      # that is the part that cannot be tested off Windows. Falling back to
-      # a redirect to a file exercises the inherited-handle path instead,
-      # so a regression in one does not block a release on the other.
+      # The Windows binary is windowed, so gui/win_console.py reattaches
+      # stdout for --cli. Two capture methods are tried: a pipe, which
+      # exercises console attachment, then a file redirect, which
+      # exercises the inherited-handle path.
       - name: Smoke-test the binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -283,11 +260,8 @@ jobs:
           }
           Write-Host "OK"
 
-      # A tagged run produces the archives that become release assets. A
-      # manual run does not: GitHub always zips whatever an artefact step
-      # uploads, so building a tar.gz first hands Linux users a tarball
-      # inside a zip for no reason. Uploading the files loose makes
-      # GitHub's own zip the archive.
+      # Only a tagged run archives. A manual run uploads loose files,
+      # since upload-artifact zips its input either way.
       - name: Package artefacts
         if: github.ref_type == 'tag'
         shell: bash
@@ -296,10 +270,8 @@ jobs:
           VERSION="${{ needs.verify.outputs.version }}"
           STEM="${BINARY}-${VERSION}-${{ matrix.platform }}"
 
-          # Every archive carries the licence texts — LGPLv3 section 4(b)
-          # requires a copy to accompany the binary, and a link is not
-          # enough — and the two command-line tools, which need numpy alone
-          # and are the rest of the project.
+          # Licence texts, as LGPLv3 4(b) requires, plus the two
+          # command-line tools.
           EXTRAS="LICENSE THIRD-PARTY-NOTICES.md README.md USAGE.md \
                   CHANGELOG.md earcongen.py earconcheck.py licenses"
 
@@ -332,10 +304,8 @@ jobs:
           cp -R licenses dist/
           ls -la dist
 
-      # A tagged run publishes the archive and its checksum only. dist/
-      # still holds the loose binary the archive was built from, and
-      # uploading that too would double the transfer and put a copy with
-      # no licence texts beside it into the release.
+      # Archive and checksum only; dist/ also holds the loose binary,
+      # which carries no licence texts beside it.
       - uses: actions/upload-artifact@v4
         if: github.ref_type == 'tag'
         with:
@@ -375,7 +345,6 @@ jobs:
           ls -la
 
       - name: Extract release notes from the changelog
-        id: notes
         run: |
           VERSION="${{ needs.verify.outputs.version }}"
           # Pull the section for this version out of CHANGELOG.md.
@@ -389,12 +358,37 @@ jobs:
           fi
           cat release-notes.md
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*
-          body_path: release-notes.md
-          draft: false
+      # Org policy permits only actions owned by indevlin or authored by
+      # GitHub, so the release is cut with gh, which ships on the runner.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          ASSETS=(artifacts/*)
+          shopt -u nullglob
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "::error::No artefacts to attach."
+            exit 1
+          fi
+          printf '  %s\n' "${ASSETS[@]}"
+
           # A suffix such as 20260908-rc1 marks a prerelease; a bare
           # datestamp is a full release.
-          prerelease: ${{ contains(needs.verify.outputs.version, '-') }}
-          fail_on_unmatched_files: true
+          FLAGS=()
+          case "$VERSION" in
+            *-*) FLAGS+=(--prerelease) ;;
+          esac
+
+          # A re-run finds the release present, so edit and clobber
+          # rather than fail.
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release edit "$VERSION" --notes-file release-notes.md "${FLAGS[@]}"
+            gh release upload "$VERSION" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$VERSION" "${ASSETS[@]}" \
+              --title "$VERSION" --notes-file release-notes.md "${FLAGS[@]}"
+          fi

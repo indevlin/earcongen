@@ -1,21 +1,13 @@
-"""What the GUI knows about each setting.
+"""Per-setting metadata for the GUI.
 
-Defaults and choices are not written down here. They are read from
-``earcongen.build_parser()`` at import time, so the command line stays the
-single source of truth: add a voice or move a default in earcongen.py and
-the GUI follows without being edited. What lives here is everything the
-parser has no opinion about — the slider bounds, the grouping, and the
-explanation shown on hover.
+Defaults and choices are read from ``earcongen.build_parser()`` at import
+time rather than duplicated here. This module supplies what the parser
+does not carry: slider bounds, grouping and tooltip text.
 
-On slider bounds
-----------------
-Related settings deliberately share a range, so that three sliders sitting
-above one another can be compared by eye rather than by reading their
-numbers. The frequency controls all run 100-4000 Hz; the two note-length
-controls both run 40-2000 ms; spacing and ring-out share 0-1200 ms; attack
-and release share 0-300 ms. A slider is a coarse instrument in any case —
-the spin box beside it accepts values the slider cannot reach precisely,
-and both are clamped to the same bounds.
+Related settings share a slider range so stacked sliders are comparable
+by eye: frequencies 100-4000 Hz, note lengths 40-2000 ms, spacing and
+ring-out 0-1200 ms, attack and release 0-300 ms. The spin box beside each
+slider reaches values the slider cannot; both clamp to the same bounds.
 """
 
 from __future__ import annotations
@@ -24,17 +16,15 @@ from dataclasses import dataclass, field
 
 import earcongen
 
-#: The parser, built once. Introspecting it is how defaults and choices
-#: reach the GUI without being copied.
+#: Built once; introspected for defaults and choices.
 PARSER = earcongen.build_parser()
 
-#: Every default, as a plain namespace. `parse_args([])` is the documented
-#: way to ask argparse what it would do with no arguments at all.
+#: Every default, from parsing an empty argument list.
 CLI_DEFAULTS = vars(PARSER.parse_args([]))
 
 
 def choices_for(dest: str) -> list[str]:
-    """The permitted values of a choice argument, in the parser's order."""
+    """Permitted values of a choice argument, in the parser's order."""
     for action in PARSER._actions:
         if action.dest == dest and action.choices:
             return list(action.choices)
@@ -43,7 +33,7 @@ def choices_for(dest: str) -> list[str]:
 
 @dataclass(frozen=True)
 class Param:
-    """One setting, and everything needed to draw a control for it."""
+    """One setting and the metadata needed to draw its control."""
 
     key: str                  # matches the argparse dest exactly
     label: str
@@ -54,12 +44,11 @@ class Param:
     step: float = 1.0
     decimals: int = 0
     suffix: str = ""
-    #: True when None is meaningful — "leave this to the voice". These get
-    #: a checkbox that enables the rest of the control.
+    #: True where None means "defer to the voice". Draws a checkbox that
+    #: enables the rest of the control.
     optional: bool = False
     optional_label: str = "override"
-    #: Shown under the control for choice parameters whose members carry
-    #: their own descriptions (voices, families, presets).
+    #: Names a blurb table to show beside a choice control.
     describes: str = ""
 
     @property
@@ -78,11 +67,8 @@ class Group:
     params: list[Param] = field(default_factory=list)
 
 
-# --------------------------------------------------------------------------
-# The settings themselves. Tooltip text is the condensed form of the
-# reasoning in README.md and `earcongen.py --notes`; if you change the
-# behaviour, change the tooltip in the same commit.
-# --------------------------------------------------------------------------
+# Tooltips are user-facing text; update them alongside any behaviour
+# change they describe.
 
 IDENTITY = Group(
     "Family identity",
@@ -99,7 +85,7 @@ IDENTITY = Group(
                 "most legible over background noise without being sharp, "
                 "which is usually a timbre problem rather than a volume one.\n\n"
                 "droid and droid_wild add ring modulation, pitch glides and "
-                "warble. They are the astromech voices and are not restful."
+                "warble. These are the droid voices and are not restful."
             ),
         ),
         Param(
@@ -402,12 +388,12 @@ OUTPUT = Group(
 
 GROUPS: list[Group] = [IDENTITY, TIMING, CHARACTER, LOUDNESS, OUTPUT]
 
-#: Flat lookup, for applying presets and reading the whole form back.
+#: Flat lookup by key, for presets and form read-back.
 ALL_PARAMS: dict[str, Param] = {
     p.key: p for group in GROUPS for p in group.params
 }
 
-#: Shown in the preset dropdown above the real presets.
+#: Preset dropdown entry that unlocks every control.
 CUSTOM = "Custom"
 
 PRESET_BLURBS: dict[str, str] = {
@@ -429,16 +415,15 @@ for _name in earcongen.FAMILY_NAMES:
 
 
 def preset_values(name: str) -> dict:
-    """A preset's settings, restricted to those the GUI has a control for.
+    """A preset's settings, limited to keys with a control.
 
-    Presets also carry `out`, which the GUI deliberately ignores: the user
-    chose an output directory and a preset should not move it. The preset
-    name becomes the subfolder instead.
+    Drops `out`: the chosen output directory is not a preset's to change.
+    The preset name becomes the subfolder instead.
     """
     cfg = earcongen.PRESETS[name]
     return {k: v for k, v in cfg.items() if k in ALL_PARAMS}
 
 
 def default_values() -> dict:
-    """Every GUI-controlled setting at its command-line default."""
+    """Every GUI-controlled setting at its parser default."""
     return {key: CLI_DEFAULTS.get(key) for key in ALL_PARAMS}

@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
 #
 # scripts/build_local.sh — build, smoke-test and package the earcongen GUI
-# binary the same way the Release workflow does, on this machine.
+# binary locally, mirroring .github/workflows/release.yml step for step:
+# same preflight, same `pyinstaller packaging/earcongen.spec --noconfirm
+# --clean`, same `--cli version` smoke test, same archive layout and
+# SHA-256 manifest.
 #
-# The point is that a local build and a CI build are the same build. Every
-# step here mirrors a step in .github/workflows/release.yml: the same preflight
-# on the checkout, the same `pyinstaller packaging/earcongen.spec --noconfirm
-# --clean`, the same `--cli version` smoke test, the same archive layout with
-# the licence texts LGPLv3 4(b) requires, and the same SHA-256 file. If this
-# passes and CI does not, the difference is the runner, not the tree — which is
-# the whole reason to be able to run it here.
+# Only the GUI is frozen; earcongen.py and earconcheck.py ship as source
+# inside the archive.
 #
-# Only the GUI is frozen. earcongen.py and earconcheck.py need numpy alone and
-# are shipped as source inside the archive, so the command-line tools work
-# without the binary and the binary is not the only way to use the project.
-#
-# PyInstaller does not cross-compile: this builds for the platform it runs on.
-# Linux and macOS run it directly; on Windows use Git Bash or MSYS2.
+# PyInstaller does not cross-compile: this builds for the host platform.
+# On Windows run it under Git Bash or MSYS2.
 #
 # Usage:
 #   scripts/build_local.sh                 build, test, package
@@ -25,14 +19,11 @@
 #   scripts/build_local.sh --dir           directory layout instead of onefile
 #   scripts/build_local.sh --check         run the test suite first
 #
-# Local builds are not signed. Signing belongs to the release workflow, which
-# holds the key; a signature made here would prove nothing about the artefacts
-# that workflow publishes.
+# Local builds are unsigned; the release workflow holds the signing key.
 #
 set -euo pipefail
 
-# Resolved before the cd below, so --help still finds this file when the
-# script is invoked by a relative path from somewhere else.
+# Resolved before the cd below, so --help works under a relative path.
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -79,9 +70,9 @@ command -v "$PY" >/dev/null 2>&1 || PY=python
 command -v "$PY" >/dev/null 2>&1 || die "No python3 on PATH. Set PYTHON=/path/to/python."
 echo "python:      $("$PY" --version 2>&1)  ($(command -v "$PY"))"
 
-# ── Preflight: the same paths the workflow's verify job checks ───────────────
-# A file missing here fails in seconds with a clear message; without this the
-# same problem surfaces as a build error several dependency installs later.
+# ── Preflight ───────────────────────────────────────────────────────────────
+# Fails immediately on an incomplete checkout, rather than part-way
+# through a build.
 say "Preflight"
 MISSING=0
 for path in packaging/earcongen.spec packaging/build_common.py \
@@ -92,8 +83,7 @@ for path in packaging/earcongen.spec packaging/build_common.py \
 done
 [ "$MISSING" -eq 0 ] || die "Checkout is incomplete. Check .gitignore is not excluding these."
 
-# Untracked-but-required is the specific trap: the file is here, so the build
-# works locally and fails in CI. Warn early rather than let CI find it.
+# A git-ignored but required file builds here and is missing in CI.
 if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
   for path in packaging/earcongen.spec packaging/build_common.py \
               packaging/entitlements.plist gui; do
@@ -114,17 +104,15 @@ if missing:
 print("  build dependencies present")
 EOF
 
-# ── Optional test suite ──────────────────────────────────────────────────────
-# Off by default because the build is the thing being asked for; --check runs
-# it first for the case where this is the last step before tagging.
+# ── Optional test suite ─────────────────────────────────────────────────────
+# Off by default; --check runs it before building.
 if [ "$RUN_CHECKS" -eq 1 ]; then
   say "Tests"
   QT_QPA_PLATFORM=offscreen "$PY" -m pytest -q tests || die "Tests failed."
 fi
 
-# ── Build ────────────────────────────────────────────────────────────────────
-# Everything is rebuilt from scratch, so a stale archive or manifest from an
-# earlier run cannot end up in this one's checksum file.
+# ── Build ───────────────────────────────────────────────────────────────────
+# Rebuilt from scratch, so no stale archive reaches the checksum file.
 rm -rf build dist
 
 say "Building ${BINARY}"
@@ -143,13 +131,9 @@ esac
 chmod +x "$BIN" 2>/dev/null || true
 echo "  built: $BIN ($(du -h "$BIN" | cut -f1))"
 
-# ── Smoke test ───────────────────────────────────────────────────────────────
-# The binary is built windowed (console=False), so this is also the check
-# that the --cli path still reaches stdout — the same thing the workflow's
-# Windows step guards with its two capture attempts.
-#
-# --cli version never imports Qt, so unlike a GUI application this needs no
-# display and no xvfb.
+# ── Smoke test ──────────────────────────────────────────────────────────────
+# Also checks that --cli output reaches stdout from a windowed build.
+# --cli version never imports Qt, so no display or xvfb is needed.
 if [ "$RUN_TESTS" -eq 1 ] && [ "$ONEDIR" -eq 0 ]; then
   say "Smoke test"
   set +e
@@ -169,10 +153,9 @@ gui/win_console.py."
   echo "  version OK: $ACTUAL"
 fi
 
-# ── Package ──────────────────────────────────────────────────────────────────
-# Every archive carries the licence texts: LGPLv3 section 4(b) wants a copy to
-# accompany the binary, and a link does not satisfy it. The command-line tools
-# travel with it so the archive is the whole project, not just the window.
+# ── Package ─────────────────────────────────────────────────────────────────
+# Every archive carries the licence texts, as LGPLv3 4(b) requires, plus
+# the command-line tools.
 if [ "$PACKAGE" -eq 1 ]; then
   say "Packaging"
   STEM="${BINARY}-${VERSION}-${PLATFORM}"
@@ -215,10 +198,9 @@ EOF
   esac
   echo "  packaged: $ART ($(du -h "$ART" | cut -f1))"
 
-  # ── Checksum ───────────────────────────────────────────────────────────────
-  # The unpackaged binary is called EarconGen with no version, so matching the
-  # version in the stem picks out the archive alone. The manifest is excluded
-  # so a re-run cannot hash the previous one into the new file.
+  # ── Checksum ──────────────────────────────────────────────────────────────
+  # Matching the version in the stem selects the archive, not the
+  # unversioned binary. The manifest itself is excluded.
   ( cd dist
     shopt -s nullglob
     ARCHIVES=()

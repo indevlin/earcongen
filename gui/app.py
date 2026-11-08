@@ -1,19 +1,11 @@
 """The earcongen window.
 
-Layout is two columns. The left is every setting, grouped and scrollable.
-The right is where the files went and a way to listen to them, because the
-loop this tool is built around is generate, listen, change one thing,
-generate again — and that loop is only as fast as its slowest step.
+Two columns: settings on the left, generated files and playback on the
+right.
 
-On the preset mode
-------------------
-Choosing a preset fills in every control with the value that preset sets
-and then locks the lot. It does not hide them. The point is that someone
-who picks "r2" and wonders why it sounds like that can read the answer off
-the form: the voice changed, the scale changed, the band widened, the
-spacing tightened. Switching to Custom unlocks everything and reveals a
-Base dropdown, which loads a preset's values as a starting point without
-locking them.
+Selecting a preset writes its values into every control and locks them,
+leaving them visible. Custom unlocks everything and shows the baseline
+dropdown, which loads a preset's values without locking them.
 """
 
 from __future__ import annotations
@@ -63,12 +55,12 @@ from .player import Player
 from .widgets import build_control
 from .worker import GenerateWorker
 
-#: Offered in the Base dropdown above the presets themselves.
+#: Baseline dropdown entry that loads parser defaults.
 BASE_NONE = "Command-line defaults"
 
 
 class MainWindow(QMainWindow):
-    """Everything. This tool is not big enough to want more windows."""
+    """The only window."""
 
     settings_changed = Signal()
 
@@ -99,13 +91,9 @@ class MainWindow(QMainWindow):
             f"Output: {self._output_dir()}"
         )
 
-    # ------------------------------------------------------------------ #
-    # Construction
-    # ------------------------------------------------------------------ #
-
     def _build_menu(self) -> None:
-        # Held on self: a QMenu created as a local and added to the bar is
-        # a well-known way to have menus vanish once Python collects them.
+        # Held on self: a QMenu kept only in a local is collected and the
+        # menu disappears from the bar.
         self.file_menu = self.menuBar().addMenu("&File")
 
         self.action_generate = QAction("&Generate", self)
@@ -204,7 +192,7 @@ class MainWindow(QMainWindow):
             )
         self.preset_combo.setToolTip(
             "Custom leaves every setting to you.\n\n"
-            "r2 is astromech phrasing that still behaves like a notification "
+            "r2 is droid phrasing that still behaves like a notification "
             "set: in band, pentatonic, phrases kept short.\n\n"
             "r2-full is the unleashed version — chromatic, up into the 2-4 kHz "
             "band, six and seven note phrases. Characterful, and tiring if it "
@@ -219,9 +207,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.preset_blurb, 2)
         layout.addLayout(row)
 
-        # Only meaningful in Custom mode, so it is hidden the rest of the
-        # time rather than disabled: a control that can never apply is
-        # clutter, not information.
+        # Hidden outside Custom mode, where it cannot apply.
         self.base_row = QWidget()
         base_layout = QHBoxLayout(self.base_row)
         base_layout.setContentsMargins(0, 0, 0, 0)
@@ -373,10 +359,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(results, 1)
         return panel
 
-    # ------------------------------------------------------------------ #
-    # Preset handling
-    # ------------------------------------------------------------------ #
-
     def _on_preset_changed(self, name: str) -> None:
         custom = name == CUSTOM
         self.base_row.setVisible(custom)
@@ -386,10 +368,8 @@ class MainWindow(QMainWindow):
         )
 
         if not custom:
-            # Show the preset's own values, starting from the defaults so
-            # that settings the preset does not mention are visibly at
-            # their normal values rather than left over from a previous
-            # experiment.
+            # Defaults first, so settings the preset does not mention do
+            # not carry over from the previous selection.
             self._apply_values(default_values())
             self._apply_values(preset_values(name))
 
@@ -429,10 +409,6 @@ class MainWindow(QMainWindow):
             self._suggest_subfolder()
         self._refresh_output_label()
 
-    # ------------------------------------------------------------------ #
-    # Destination
-    # ------------------------------------------------------------------ #
-
     def _suggest_subfolder(self) -> None:
         preset = self.preset_combo.currentText()
         if preset != CUSTOM:
@@ -440,8 +416,7 @@ class MainWindow(QMainWindow):
         else:
             voice = self.controls["voice"].value
             family = self.controls["family"].value
-            # "droid-droid" helps nobody: the droid family and the droid
-            # voice are the same idea named twice.
+            # Avoids names like "droid-droid".
             if family == "core" or family == voice or family.startswith(voice):
                 name = voice
             else:
@@ -456,8 +431,8 @@ class MainWindow(QMainWindow):
     def _output_dir(self) -> Path:
         base = Path(self.base_dir_edit.text()).expanduser()
         sub = self.subfolder_edit.text().strip()
-        # Anything with a separator in it would silently escape the base
-        # directory, so only the final component is honoured.
+        # Only the final component, so a typed path cannot escape the
+        # base directory.
         sub = Path(sub).name if sub else ""
         return base / sub if sub else base
 
@@ -484,16 +459,11 @@ class MainWindow(QMainWindow):
         if not paths.reveal(target):
             self.statusBar().showMessage(f"No file manager available. {target}")
 
-    # ------------------------------------------------------------------ #
-    # Generation
-    # ------------------------------------------------------------------ #
-
     def build_args(self) -> argparse.Namespace:
-        """The same Namespace the command line would have produced.
+        """Build the Namespace the command line would have produced.
 
-        Going through argparse's own defaults means every option the GUI
-        does not expose still has the value earcongen expects, rather than
-        being absent and failing deep inside a render.
+        Starting from parser defaults, so options without a control are
+        still present and valid.
         """
         args = earcongen.build_parser().parse_args([])
         for key, control in self.controls.items():
@@ -525,9 +495,7 @@ class MainWindow(QMainWindow):
         self.generate_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
 
-        # Both objects are held for the duration. A QThread referenced
-        # only by a local goes out of scope while running and takes the
-        # process with it.
+        # Both held for the run's duration; see gui/worker.py.
         self._thread = QThread(self)
         self._worker = GenerateWorker(args)
         self._worker.moveToThread(self._thread)
@@ -564,12 +532,7 @@ class MainWindow(QMainWindow):
         self.tree.addTopLevelItem(item)
 
     def _shortening_notices(self, args) -> list[str]:
-        """What the note cap did, in words, before anything is rendered.
-
-        Worth saying out loud: a cap can quietly turn two cues into one
-        sound, and the number of one-note cues a band can hold is a hard
-        physical limit rather than something the tool can work around.
-        """
+        """Status-bar lines describing what the note cap did."""
         if not args.note_count:
             return []
         specs = earcongen.resolve_specs(args)
@@ -619,17 +582,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Stopping after the current cue...")
 
     def _on_thread_finished(self) -> None:
-        # Cleared only once the thread has actually stopped; dropping the
-        # references while it runs is the crash this ordering avoids.
+        # Cleared only after the thread has stopped.
         self._thread = None
         self._worker = None
         self.progress.setVisible(False)
         self.generate_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
-
-    # ------------------------------------------------------------------ #
-    # Playback
-    # ------------------------------------------------------------------ #
 
     def _on_selection_changed(self) -> None:
         has = self.tree.currentItem() is not None
@@ -656,10 +614,6 @@ class MainWindow(QMainWindow):
     def _on_playback_failed(self, message: str) -> None:
         self.statusBar().showMessage(message)
 
-    # ------------------------------------------------------------------ #
-    # Help
-    # ------------------------------------------------------------------ #
-
     def _show_notes(self) -> None:
         dialog = QMessageBox(self)
         dialog.setWindowTitle("Design notes")
@@ -684,10 +638,6 @@ class MainWindow(QMainWindow):
             "Qt is used under the LGPL v3; see THIRD-PARTY-NOTICES.md."
         )
 
-    # ------------------------------------------------------------------ #
-    # Settings persistence
-    # ------------------------------------------------------------------ #
-
     def _load_settings(self) -> None:
         try:
             data = json.loads(paths.settings_file().read_text())
@@ -705,8 +655,8 @@ class MainWindow(QMainWindow):
             self.preset_combo.setCurrentText(preset)
             self.preset_combo.blockSignals(False)
 
-        # Values are restored before the preset lock is applied, so a
-        # saved Custom session comes back exactly as it was left.
+        # Restored before the preset lock is applied, so a saved Custom
+        # session returns unchanged.
         values = data.get("values") or {}
         self._apply_values({k: v for k, v in values.items() if k in self.controls})
 
@@ -730,8 +680,7 @@ class MainWindow(QMainWindow):
             paths.config_dir().mkdir(parents=True, exist_ok=True)
             paths.settings_file().write_text(json.dumps(payload, indent=2))
         except OSError:
-            # Losing preferences is a nuisance; refusing to close over it
-            # would be worse.
+            # A failed save must not block closing.
             pass
 
     def closeEvent(self, event) -> None:

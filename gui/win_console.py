@@ -1,30 +1,22 @@
 """Making standard output usable on Windows GUI builds.
 
-The EarconGen binary is built with ``console=False`` so that launching
-them does not flash up a console window. On Windows that puts the
-executable in the GUI subsystem, where it starts with no console
-attached and PyInstaller leaves ``sys.stdout`` and ``sys.stderr``
-unusable. Anything printed then vanishes, and flushing at exit raises
-``OSError: [Errno 22] Invalid argument``.
+The binary is built with ``console=False``, which puts it in the Windows
+GUI subsystem: it starts with no console attached, PyInstaller leaves
+``sys.stdout`` and ``sys.stderr`` unusable, printed output vanishes and
+flushing at exit raises ``OSError: [Errno 22] Invalid argument``. The
+``--cli`` commands need those streams.
 
-That is fine for the graphical interface, which prints nothing, but it
-breaks the ``--cli`` interface completely: output disappears whether the
-user is reading it in a terminal or a script is capturing it. The release
-workflow's smoke test depends on it, so a regression here fails a build
-rather than shipping quietly.
+Two cases are reconnected:
 
-This module reconnects the streams. It handles both cases:
+*Redirected* — ``EarconGen.exe --cli version > out.txt``, or output
+captured by a shell. Valid standard handles were inherited at creation
+and only need rewrapping as Python file objects.
 
-*Redirected* — ``edsg.exe --cli version > out.txt``, or a shell
-capturing the output. The shell has already given the process valid
-standard handles, inherited at creation. They just need wrapping back
-into Python file objects.
+*Interactive* — run from an existing console, with no inherited handles.
+The process attaches to its parent's console and uses the handles that
+produces.
 
-*Interactive* — the user runs the command in an existing console.
-There are no inherited handles, so the process attaches to the console
-of whichever process launched it and picks up the handles that creates.
-
-Everything here is a no-op off Windows.
+No-op off Windows.
 """
 
 from __future__ import annotations
@@ -44,11 +36,9 @@ INVALID_HANDLE_VALUE = 2**64 - 1
 
 
 def _is_usable(stream: object) -> bool:
-    """Return whether ``stream`` can actually be written to.
+    """Whether ``stream`` can be written to.
 
-    A windowed PyInstaller build may leave the stream as ``None``, or as
-    an object whose underlying descriptor is invalid; both must be
-    replaced.
+    A windowed build may leave it None or holding an invalid descriptor.
     """
     if stream is None:
         return False
@@ -64,9 +54,8 @@ def _is_usable(stream: object) -> bool:
 def enable_console_output() -> bool:
     """Reconnect ``sys.stdout`` and ``sys.stderr`` on Windows.
 
-    Returns ``True`` when both streams are usable afterwards. Never
-    raises: failing to attach a console must not stop the command from
-    running, since its exit code may be all the caller needs.
+    Returns True when both streams end up usable. Never raises; the
+    caller runs regardless.
     """
     if sys.platform != "win32":
         return True
@@ -82,7 +71,7 @@ def enable_console_output() -> bool:
 
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        # Declared explicitly: a HANDLE is pointer-sized, and ctypes'
+        # Declared explicitly: a HANDLE is pointer-sized and ctypes'
         # default int return type truncates it on 64-bit Windows.
         kernel32.GetStdHandle.argtypes = [ctypes.c_uint32]
         kernel32.GetStdHandle.restype = ctypes.c_void_p
@@ -95,23 +84,17 @@ def enable_console_output() -> bool:
                 return None
             return handle
 
-        # Ask what we already have *before* touching the console. This
-        # order matters: AttachConsole replaces the process's standard
-        # handles with the console's own. If the caller redirected our
-        # output to a pipe or a file, we inherited a perfectly good
-        # handle at creation, and attaching would send everything to the
-        # console instead — leaving the caller's pipe empty, which is
-        # exactly the failure this module exists to prevent.
+        # Read the existing handles before touching the console:
+        # AttachConsole replaces them with the console's own, which would
+        # redirect inherited pipe or file output to the console instead.
         handles = {
             "stdout": std_handle(STD_OUTPUT_HANDLE),
             "stderr": std_handle(STD_ERROR_HANDLE),
         }
 
         if handles["stdout"] is None and handles["stderr"] is None:
-            # Nothing inherited, so we were launched from a console
-            # without redirection. Borrowing the parent's console is now
-            # the only way to be seen. Failure is expected and fine when
-            # the parent has no console either.
+            # Nothing inherited: launched from a console without
+            # redirection. Fails harmlessly when the parent has none.
             kernel32.AttachConsole(ctypes.c_uint32(ATTACH_PARENT_PROCESS & 0xFFFFFFFF))
             handles = {
                 "stdout": std_handle(STD_OUTPUT_HANDLE),

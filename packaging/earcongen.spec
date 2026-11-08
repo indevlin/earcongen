@@ -4,10 +4,7 @@
 Build with:
     pyinstaller packaging/earcongen.spec --noconfirm
 
-The command-line tools are not frozen. earcongen.py and earconcheck.py
-need numpy and nothing else, run anywhere Python does, and are meant to
-be read and edited — wrapping them in a 60 MB binary would take something
-away rather than add to it.
+Only the GUI is frozen; earcongen.py and earconcheck.py ship as source.
 """
 
 import sys
@@ -23,8 +20,7 @@ ICNS = ROOT / "packaging" / "icons" / "earcongen.icns"
 a = Analysis(**analysis_kwargs("earcongui.py"))
 pyz = PYZ(a.pure)
 
-# Icons are optional: a build without them is correct, just plain. See
-# packaging/icons/README.md.
+# Optional; see packaging/icons/README.md.
 icon = None
 if sys.platform == "win32" and ICON.is_file():
     icon = str(ICON)

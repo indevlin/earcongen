@@ -1,20 +1,9 @@
 """Playing a generated cue from inside the application.
 
-Two paths, tried in order.
-
-``QSoundEffect`` is the right tool: it is built for exactly this — short,
-uncompressed, low-latency samples — and it plays without blocking the
-interface. It is used whenever QtMultimedia is present and reports a
-working backend.
-
-The fallback shells out to whatever the platform provides, the same way
-``earcongen.play()`` does from the command line. That path exists because
-QtMultimedia's Linux backend depends on a running sound server, and a
-machine that has ``paplay`` but no working Qt audio plugin is a real
-configuration rather than a hypothetical one.
-
-Either way the caller sees the same three methods, so the window does not
-have to care which is in use.
+Two backends behind one interface. ``QSoundEffect`` is used when
+QtMultimedia is present and reports a working backend; otherwise an
+external command-line player is run, since QtMultimedia on Linux needs a
+running sound server that may be absent.
 """
 
 from __future__ import annotations
@@ -26,17 +15,16 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QUrl, Signal
 
-try:  # QtMultimedia is a separate wheel component and can be absent.
+try:  # A separate wheel component, and can be absent.
     from PySide6.QtMultimedia import QSoundEffect
 except ImportError:  # pragma: no cover - depends on the install
     QSoundEffect = None  # type: ignore[assignment]
 
 
 def external_player() -> list[str] | None:
-    """The best available command-line player, or None.
+    """First available command-line player, or None.
 
-    Ordered by how likely each is to be both present and correct.
-    ``winsound`` is handled separately since it is a module, not a
+    ``winsound`` is handled separately, being a module rather than a
     command.
     """
     if sys.platform == "darwin" and shutil.which("afplay"):
@@ -51,7 +39,7 @@ def external_player() -> list[str] | None:
 class Player(QObject):
     """Plays one file at a time, stopping whatever was already playing."""
 
-    #: Emitted with a human-readable reason when playback could not start.
+    #: Reason playback could not start.
     failed = Signal(str)
     #: Emitted with the path when playback begins.
     started = Signal(Path)
@@ -63,10 +51,8 @@ class Player(QObject):
         self._backend = "none"
 
         if QSoundEffect is not None:
-            # Held as an attribute for the lifetime of the Player. A
-            # QSoundEffect that goes out of scope stops mid-sample and
-            # can take the process with it, which is the standard Qt
-            # object-lifetime trap.
+            # Held for the Player's lifetime: a QSoundEffect that goes
+            # out of scope stops mid-sample and can crash the process.
             self._effect = QSoundEffect(self)
             self._backend = "qt"
         elif external_player() or sys.platform == "win32":
@@ -74,11 +60,11 @@ class Player(QObject):
 
     @property
     def backend(self) -> str:
-        """Which path is in use: ``qt``, ``external`` or ``none``."""
+        """Backend in use: ``qt``, ``external`` or ``none``."""
         return self._backend
 
     def describe(self) -> str:
-        """One line for the status bar, so the user knows what is playing."""
+        """One-line backend description for the status bar."""
         if self._backend == "qt":
             return "audio: Qt"
         if self._backend == "external":
@@ -96,9 +82,7 @@ class Player(QObject):
             self._effect.setSource(QUrl.fromLocalFile(str(path)))
             self._effect.setVolume(1.0)
             self._effect.play()
-            # A backend that failed to load leaves the effect in an error
-            # state rather than raising, so fall through to the external
-            # player rather than sitting in silence.
+            # A failed load sets an error status rather than raising.
             if self._effect.status() == QSoundEffect.Error:
                 self._backend = "external"
                 self._play_external(path)
@@ -113,8 +97,7 @@ class Player(QObject):
             try:
                 import winsound
 
-                # Asynchronous, so the interface stays responsive. This
-                # returns immediately and the sound plays on.
+                # SND_ASYNC returns immediately, keeping the UI live.
                 winsound.PlaySound(
                     str(path), winsound.SND_FILENAME | winsound.SND_ASYNC
                 )

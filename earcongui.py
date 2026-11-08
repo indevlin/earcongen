@@ -4,13 +4,10 @@
     ./earcongui.py                 open the window
     ./earcongui.py --cli version   print the version and exit
 
-The CLI branch exists for the release workflow, which starts the built
-binary and checks that the version it reports matches the tag. It runs
-before Qt is imported, so a machine with no display can still verify a
-build.
+The --cli branch runs before Qt is imported, so it works with no display.
+The release workflow uses it to check the built binary's version.
 
-Requires PySide6 in addition to numpy. The command-line tool does not;
-see requirements.txt.
+Requires PySide6 as well as numpy.
 """
 
 from __future__ import annotations
@@ -18,9 +15,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# A frozen build has the repository root on sys.path already. From a
-# checkout it does not, and `import earcongen` must work from any working
-# directory, so the root is added explicitly.
+# A frozen build already has the root on sys.path; a checkout does not,
+# and `import earcongen` must work from any working directory.
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -42,7 +38,7 @@ flags.
 
 
 def run_cli(argv: list[str]) -> int:
-    """The non-graphical commands. Never imports Qt."""
+    """Non-graphical commands. Never imports Qt."""
     enable_console_output()
     if argv == ["version"]:
         print(paths.read_version())
@@ -70,8 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         print(USAGE, file=sys.stderr)
         return 2
 
-    # Imported here so that --cli works on a machine with no Qt platform
-    # plugin available, which is exactly the situation in CI.
+    # Imported here so --cli works without a Qt platform plugin.
     from PySide6.QtWidgets import QApplication
 
     from gui.app import MainWindow

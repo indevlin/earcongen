@@ -1,30 +1,10 @@
 #!/usr/bin/env python3
 """
-earcongen -- generate a related-but-distinguishable family of earcons.
+earcongen -- generate a family of earcons.
 
-An "earcon" is a short, non-speech audio cue that stands in for a message:
-the sound a phone makes for a new message, the chime a car makes when you
-leave the lights on. Good ones are learnable, unobtrusive, and mutually
-distinguishable. Most software ships bad ones, because they are usually
-chosen one at a time rather than designed as a set.
-
-This tool designs them as a set. You pick a timbre, a scale and a
-frequency band; it emits a family of cues that share an identity but stay
-individually recognisable, normalised so they sound equally loud.
-
-Design constraints baked in (see --notes, or README.md, for the reasoning):
-  * soft attack, exponential decay -- struck objects, not beeps
-  * fundamentals kept out of the 2-4 kHz irritation band by default
-  * every note drawn from one pentatonic scale, so cues that overlap in
-    time never clash
-  * motifs of 2-3 notes rather than single tones, so cues are
-    distinguishable by contour rather than by pitch alone (--note-count
-    shortens them when you need it, at a cost the tool will tell you about)
-  * A-weighted loudness normalisation, so cues at different pitches
-    actually sound equally loud
-  * nothing loops, and most cues land under a second
-
-Requires numpy only. Writes 16-bit mono WAV.
+Synthesises a set of short notification cues from one timbre, scale and
+frequency band, A-weighted so every member sounds equally loud. Requires
+numpy. Writes 16-bit mono WAV.
 
 Quick start:
     ./earcongen.py --voice chime --out audio/chime
@@ -53,13 +33,9 @@ import numpy as np
 
 SR = 44100
 
-# ---------------------------------------------------------------------------
-# Voices: partial structure + default envelope character.
-#
 # ratios : frequency multipliers of the fundamental
 # amps   : relative amplitude of each partial
 # decays : per-partial decay multiplier (>1 = decays faster than fundamental)
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -73,8 +49,7 @@ class Voice:
     fm_index: float = 0.0          # >0 enables FM colouring
     fm_ratio: float = 2.0
     fm_decay: float = 0.35         # index falls off this fast (fraction of decay)
-    # --- modulation: off by default, so every pre-existing voice is
-    # --- bit-for-bit unchanged. These are what make a droid a droid.
+    # Zero disables each of the following.
     glide_ms: float = 0.0          # portamento into each note from the previous pitch
     sweep_cents: float = 0.0       # per-note bend over the note's decay; -/+
     vib_hz: float = 0.0            # warble rate
@@ -86,7 +61,6 @@ class Voice:
 
 
 VOICES: dict[str, Voice] = {
-    # Inharmonic partials, long tail. The classic "notification" sound.
     "bell": Voice(
         "bell",
         ratios=[0.56, 1.00, 1.19, 1.71, 2.00, 2.74, 3.00],
@@ -96,7 +70,6 @@ VOICES: dict[str, Voice] = {
         decay_ms=900.0,
         blurb="inharmonic, long tail, unmistakably a bell",
     ),
-    # Harmonic and soft. Least intrusive of the set.
     "chime": Voice(
         "chime",
         ratios=[1.00, 2.00, 3.00, 4.20],
@@ -106,7 +79,7 @@ VOICES: dict[str, Voice] = {
         decay_ms=620.0,
         blurb="soft harmonic, gentle -- good default for low-urgency alerts",
     ),
-    # Real marimba bar partials (1 : 3.9 : 9.2). Woody, fast, very legible.
+    # Measured marimba bar partials.
     "marimba": Voice(
         "marimba",
         ratios=[1.00, 3.90, 9.20],
@@ -116,7 +89,6 @@ VOICES: dict[str, Voice] = {
         decay_ms=300.0,
         blurb="woody, short, cuts through engine noise without being sharp",
     ),
-    # Very long decay, sparse high partials. Ambient.
     "glass": Voice(
         "glass",
         ratios=[1.00, 2.76, 5.40, 8.93],
@@ -126,7 +98,7 @@ VOICES: dict[str, Voice] = {
         decay_ms=1300.0,
         blurb="airy, very long tail -- atmospheric, easy to miss under noise",
     ),
-    # 1/n harmonic series, quick decay.
+    # 1/n harmonic series.
     "pluck": Voice(
         "pluck",
         ratios=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
@@ -136,7 +108,6 @@ VOICES: dict[str, Voice] = {
         decay_ms=260.0,
         blurb="string-like, tight, unobtrusive",
     ),
-    # FM colouring, brighter onset that mellows. More presence than chime.
     "alert": Voice(
         "alert",
         ratios=[1.00, 2.00],
@@ -149,7 +120,6 @@ VOICES: dict[str, Voice] = {
         fm_decay=0.30,
         blurb="FM sheen, more presence -- for things you must not miss",
     ),
-    # Brightest / fastest. Still enveloped, so not a piezo beep.
     "alarm": Voice(
         "alarm",
         ratios=[1.00, 2.00, 3.00, 4.00],
@@ -162,7 +132,6 @@ VOICES: dict[str, Voice] = {
         fm_decay=0.25,
         blurb="urgent, bright -- use sparingly, this is the one that nags",
     ),
-    # Reference tone. Deliberately plain.
     "sine": Voice(
         "sine",
         ratios=[1.00],
@@ -172,9 +141,8 @@ VOICES: dict[str, Voice] = {
         decay_ms=500.0,
         blurb="pure sine reference -- synthetic, fatiguing, here for A/B only",
     ),
-    # Astromech, house-trained. Ring modulation at a non-integer ratio gives
-    # the metallic burble; a short glide between notes gives the speech-like
-    # portamento. Kept mild enough to still pass as a notification sound.
+    # Non-integer ring_ratio supplies the metallic burble; glide_ms the
+    # portamento between notes.
     "droid": Voice(
         "droid",
         ratios=[1.00, 2.00, 3.02],
@@ -187,10 +155,9 @@ VOICES: dict[str, Voice] = {
         vib_cents=16.0,
         ring_ratio=1.41,
         ring_depth=0.30,
-        blurb="astromech burble -- ring-modded, glides between notes",
+        blurb="droid burble -- ring-modded, glides between notes",
     ),
-    # The unleashed version. Faster, wider warble, deeper ring mod, a touch
-    # of servo noise, and a per-note upward bend. Not a well-behaved earcon.
+    # Wider warble and bend, deeper ring mod, plus servo noise.
     "droid_wild": Voice(
         "droid_wild",
         ratios=[1.00, 2.00],
@@ -205,15 +172,12 @@ VOICES: dict[str, Voice] = {
         ring_ratio=2.73,
         ring_depth=0.55,
         noise_amt=0.05,
-        blurb="astromech unleashed -- wide bends, deep ring mod, servo noise",
+        blurb="droid unconstrained -- wide bends, deep ring mod, servo noise",
     ),
 }
 
-# ---------------------------------------------------------------------------
-# Scales, expressed as semitone offsets within an octave.
-# Pentatonics are used because any two notes drawn from one sound fine
-# together -- which matters when two alerts fire within a second.
-# ---------------------------------------------------------------------------
+# Semitone offsets within an octave. Any two notes from one pentatonic are
+# consonant, so overlapping cues never clash.
 
 SCALES: dict[str, list[int]] = {
     "major_pent": [0, 2, 4, 7, 9],
@@ -221,19 +185,11 @@ SCALES: dict[str, list[int]] = {
     "hirajoshi": [0, 2, 3, 7, 8],
     "kumoi": [0, 2, 3, 7, 9],
     "whole_tone": [0, 2, 4, 6, 8, 10],
-    # Deliberately breaks the tool's own consonance guarantee. Present for
-    # the droid presets, where speech-like arbitrariness is the point and
-    # two cues overlapping is not a scenario anyone is designing for.
+    # Forfeits the consonance guarantee above.
     "chromatic": list(range(12)),
 }
 
-# ---------------------------------------------------------------------------
-# Contours. Degree offsets within the chosen scale.
-# Semantics that hold up in practice:
-#   rising  -> opportunity / permission granted
-#   falling -> attention / state degrading
-#   level   -> neutral status
-# ---------------------------------------------------------------------------
+# Degree offsets within the chosen scale.
 
 CONTOURS: dict[str, list[int]] = {
     "rise2": [0, 2],
@@ -248,16 +204,14 @@ CONTOURS: dict[str, list[int]] = {
     "leap_down": [0, -4],
     "rise_hold": [0, 1, 1],
     "single": [0],
-    # Four-note shapes. Past three notes a cue starts reading as a melody
-    # rather than a token; these exist for cues that can afford the time.
+    # Four-note shapes.
     "rise4": [0, 1, 2, 4],
     "fall4": [0, -1, -2, -4],
     "arch": [0, 2, 4, 2],
     "vee": [0, -2, -4, -2],
     "double_rise": [0, 2, 0, 2],
     "query": [0, 1, 3, 6],
-    # Droid material. Long, jumpy, and speech-like -- these are what the
-    # --r2 presets reach for, and they are a poor fit for anything else.
+    # Long, jumpy shapes used by the --r2 presets.
     "whistle_up": [0, 7],
     "whistle_down": [0, -7],
     "scan": [0, 1, 2, 3, 4, 5],
@@ -281,14 +235,7 @@ class EarconSpec:
     label: str = ""
 
 
-# The starting set. Edit freely, or supply your own via --spec -- this is
-# the point of the tool. Slugs are deliberately generic so the output drops
-# into any project; the labels describe the *shape* each cue implies, not
-# any particular application's events.
-#
-# Two cues that share an opening and differ only in resolution (01 and 02
-# below) read as related without being confusable. That is the usual way
-# to handle two events in the same category.
+# Default set, overridable with --spec. Labels are documentation only.
 DEFAULT_FAMILY: list[EarconSpec] = [
     EarconSpec("earcon01", "rise3", 0, label="positive / opportunity found"),
     EarconSpec("earcon02", "rise_hold", 0, label="positive, related to 01"),
@@ -301,24 +248,12 @@ DEFAULT_FAMILY: list[EarconSpec] = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# The catalogue.
-#
-# `core` is the original eight and is still the default; its output is
-# unchanged. The rest are curated sets for specific problem domains, on the
-# principle from USAGE.md that the answer to needing more than eight cues is
-# to pick a different eight, not to ship sixteen.
-#
-# Within a set, related cues share a contour opening and opposed cues have
-# opposed contours. Across sets, slugs are namespaced so two themes can be
-# generated into one directory without collision.
-# ---------------------------------------------------------------------------
+# Slugs are namespaced per set, so several sets can share one output
+# directory without collision.
 
 FAMILIES: dict[str, list[EarconSpec]] = {
     "core": DEFAULT_FAMILY,
 
-    # Direct manipulation. Short, quiet, high-frequency-of-use cues -- these
-    # fire many times an hour, so they are the ones that must not wear out.
     "ui": [
         EarconSpec("ui_open", "rise2", 0, gain=0.85, label="panel or view opening"),
         EarconSpec("ui_close", "fall2", 0, gain=0.85, label="panel or view closing"),
@@ -330,8 +265,6 @@ FAMILIES: dict[str, list[EarconSpec]] = {
         EarconSpec("ui_deny", "downup", -3, label="not permitted"),
     ],
 
-    # Machine state. Longer, more ceremonial -- these fire rarely and want
-    # to be noticed when they do.
     "system": [
         EarconSpec("sys_boot", "rise4", -2, label="service starting"),
         EarconSpec("sys_ready", "rise_hold", 0, label="service ready"),
@@ -343,8 +276,6 @@ FAMILIES: dict[str, list[EarconSpec]] = {
         EarconSpec("sys_job_failed", "vee", -2, label="background task failed"),
     ],
 
-    # Interruptions from other people. These compete with whatever the
-    # listener is doing, so contour separation matters more than usual.
     "message": [
         EarconSpec("msg_in", "rise2", 1, label="incoming message"),
         EarconSpec("msg_sent", "fall2", 3, gain=0.8, label="message sent"),
@@ -353,9 +284,6 @@ FAMILIES: dict[str, list[EarconSpec]] = {
         EarconSpec("msg_call_end", "fall3", 0, label="call ended"),
     ],
 
-    # Long-running operations. `prog_tick` is deliberately the quietest cue
-    # in the catalogue: anything that can fire every few seconds must be
-    # closer to a texture than to an alert.
     "progress": [
         EarconSpec("prog_start", "rise2", -1, label="operation started"),
         EarconSpec("prog_tick", "single", 0, gain=0.55, label="progress step"),
@@ -364,8 +292,7 @@ FAMILIES: dict[str, list[EarconSpec]] = {
         EarconSpec("prog_abort", "fall4", -3, label="operation aborted"),
     ],
 
-    # Astromech, house-trained. Same slugs as `droid_full` so the two are
-    # drop-in swappable once you have decided how much character you want.
+    # Same slugs as droid_full, so the two are interchangeable.
     "droid": [
         EarconSpec("r2_affirm", "rise3", 1, label="yes / acknowledged"),
         EarconSpec("r2_negate", "fall3", -1, label="no / refused"),
@@ -377,8 +304,6 @@ FAMILIES: dict[str, list[EarconSpec]] = {
         EarconSpec("r2_powerdown", "fall4", -2, note_ms=420.0, label="powering down"),
     ],
 
-    # Astromech, unleashed. Longer phrases, wider leaps. Reached for by
-    # --r2-full, which also swaps in the chromatic scale and a wider band.
     "droid_full": [
         EarconSpec("r2_affirm", "whistle_up", 1, label="yes / acknowledged"),
         EarconSpec("r2_negate", "whistle_down", -1, label="no / refused"),
@@ -394,8 +319,7 @@ FAMILIES: dict[str, list[EarconSpec]] = {
 
 
 def resolve_family(name: str) -> list[EarconSpec]:
-    """`all` is every non-droid cue, for auditioning the catalogue in one
-    pass. It is not a family anyone should ship -- see --list-families."""
+    """Specs for a named set. `all` concatenates every non-droid cue."""
     if name != "all":
         return FAMILIES[name]
     out: list[EarconSpec] = []
@@ -413,15 +337,12 @@ def resolve_family(name: str) -> list[EarconSpec]:
 FAMILY_NAMES = sorted(FAMILIES) + ["all"]
 
 
-# ---------------------------------------------------------------------------
-# Presets: named bundles of flag values. A preset only fills in options you
-# did not set yourself, so `--r2 --voice bell` does exactly what it looks
-# like it does.
-# ---------------------------------------------------------------------------
+# Named bundles of flag values. apply_preset() fills in only the options
+# absent from the command line.
 
 PRESETS: dict[str, dict] = {
     "r2": {
-        "blurb": "astromech chatter that still behaves like an earcon set",
+        "blurb": "droid chatter kept within earcon constraints",
         "voice": "droid",
         "scale": "kumoi",
         "family": "droid",
@@ -434,7 +355,7 @@ PRESETS: dict[str, dict] = {
         "out": "audio/r2",
     },
     "r2-full": {
-        "blurb": "astromech unleashed -- chromatic, wide band, long phrases",
+        "blurb": "droid unconstrained -- chromatic, wide band, long phrases",
         "voice": "droid_wild",
         "scale": "chromatic",
         "family": "droid_full",
@@ -448,11 +369,6 @@ PRESETS: dict[str, dict] = {
         "out": "audio/r2-full",
     },
 }
-
-
-# ---------------------------------------------------------------------------
-# Synthesis
-# ---------------------------------------------------------------------------
 
 
 def a_weight_gain(freqs: np.ndarray) -> np.ndarray:
@@ -485,20 +401,15 @@ def a_weighted_rms(sig: np.ndarray) -> float:
 def envelope(n: int, attack_ms: float, decay_ms: float, decay_mult: float) -> np.ndarray:
     """Raised-cosine attack into exponential decay.
 
-    The attack shape is what separates a bell from a click. Below ~5 ms
-    the onset reads as a transient and the ear flinches.
-
-    `n` is the render length, which is deliberately NOT the note length --
-    the envelope must be allowed to decay naturally past the nominal note
-    duration. Truncating it mid-oscillation is a click, however quiet the
-    signal is at the truncation point.
+    `n` is the render length, not the note length: the envelope decays
+    past the nominal duration so it is never truncated mid-oscillation.
     """
     t = np.arange(n) / SR
     atk_n = max(1, int(SR * attack_ms / 1000.0))
     atk_n = min(atk_n, n)
 
     env = np.ones(n)
-    # Raised cosine rise -- no discontinuity in the first derivative.
+    # Continuous in the first derivative.
     rise = 0.5 * (1.0 - np.cos(np.pi * np.arange(atk_n) / atk_n))
     env[:atk_n] = rise
 
@@ -513,10 +424,8 @@ def freq_track(freq: float, prev_freq: float | None, voice: Voice,
                decay_ms: float, n: int, t: np.ndarray) -> np.ndarray | None:
     """Instantaneous fundamental over the note, or None if it is constant.
 
-    Returning None matters: a constant-pitch note takes the closed-form
-    phase path below, which is both faster and bit-identical to what this
-    tool emitted before glides existed. Only voices that actually modulate
-    pay for the integrated path.
+    None routes render_note() to its closed-form phase path; only
+    modulating voices pay for phase integration.
     """
     glides = (voice.glide_ms > 0.0 and prev_freq is not None
               and prev_freq > 0.0 and abs(prev_freq - freq) > 1e-9)
@@ -527,15 +436,13 @@ def freq_track(freq: float, prev_freq: float | None, voice: Voice,
     f = np.full(n, float(freq))
 
     if glides:
-        # Glide in log-frequency space, eased with a raised cosine. Linear
-        # interpolation in Hz sounds like a machine; this sounds like a
-        # voice, which is the whole point.
+        # Interpolated in log-frequency space, raised-cosine eased.
         g = min(max(1, int(SR * voice.glide_ms / 1000.0)), n)
         x = 0.5 * (1.0 - np.cos(np.pi * np.arange(g) / g))
         f[:g] = prev_freq * (freq / prev_freq) ** x
 
     if voice.sweep_cents:
-        # Bend across the note's own decay time, not the render length.
+        # Bend spans the decay time, not the render length.
         prog = np.clip(t / max(decay_ms / 1000.0, 1e-4), 0.0, 1.0)
         f = f * 2.0 ** ((voice.sweep_cents / 1200.0) * prog)
 
@@ -548,11 +455,9 @@ def freq_track(freq: float, prev_freq: float | None, voice: Voice,
 
 def render_note(freq: float, voice: Voice, decay_ms: float, render_n: int,
                 prev_freq: float | None = None) -> np.ndarray:
-    """Render one note for `render_n` samples, decaying with time constant
-    derived from `decay_ms`. Render length and decay length are separate:
-    the caller renders to the end of the buffer so nothing is cut off.
+    """Render one note for `render_n` samples with a `decay_ms` decay.
 
-    `prev_freq` is the previous note's fundamental, used only by voices
+    `prev_freq` is the previous note's fundamental, read only by voices
     with a non-zero glide.
     """
     if render_n <= 0:
@@ -574,9 +479,8 @@ def render_note(freq: float, voice: Voice, decay_ms: float, render_n: int,
             pf_t = f_t * ratio
             if float(np.max(pf_t)) >= SR / 2.0:
                 continue
-            # Phase is the integral of instantaneous frequency. Multiplying
-            # a varying frequency by t instead is the classic way to get a
-            # note that is in tune at both ends and wrong in the middle.
+            # Phase is the integral of instantaneous frequency; pf_t * t
+            # would detune the middle of the note.
             phase = (2.0 * np.pi / SR) * np.cumsum(pf_t)
             mod_phase = phase * voice.fm_ratio
 
@@ -587,16 +491,15 @@ def render_note(freq: float, voice: Voice, decay_ms: float, render_n: int,
         env = envelope(render_n, voice.attack_ms, decay_ms, dec)
         out += amp * env * np.sin(phase)
 
-    # Ring modulation. A non-integer ratio puts sum and difference tones
-    # where no harmonic series would, which is most of what reads as
-    # "machine trying to talk" rather than "instrument".
+    # A non-integer ratio places sum and difference tones off the
+    # harmonic series.
     if voice.ring_depth > 0.0 and voice.ring_ratio > 0.0:
         carrier = f_t if f_t is not None else np.full(render_n, float(freq))
         ring_phase = (2.0 * np.pi / SR) * np.cumsum(carrier * voice.ring_ratio)
         out = out * (1.0 - voice.ring_depth) + out * np.sin(ring_phase) * voice.ring_depth
 
-    # Servo noise, band-limited by a crude moving average tied to the
-    # fundamental. Deterministically seeded so repeat runs are identical.
+    # Band-limited by a moving average sized from the fundamental. Seeded
+    # from the frequency, so repeat runs are identical.
     if voice.noise_amt > 0.0:
         rng = np.random.default_rng(int(abs(freq) * 1000.0) & 0xFFFFFFFF)
         nz = rng.standard_normal(render_n)
@@ -611,34 +514,12 @@ def render_note(freq: float, voice: Voice, decay_ms: float, render_n: int,
     return out
 
 
-# ---------------------------------------------------------------------------
-# Shortening a family properly.
-#
-# Truncation is blunt: `rise3` cut to two notes is `rise2`, and any two
-# contours sharing an opening become the same sound. The alternative is to
-# ask what each contour *means* and hand it a purpose-built shape of the
-# requested length that still means it -- a big rise stays a big rise, an
-# arch still returns to where it started.
-#
-# Two mechanisms do that, and they are separate on purpose:
-#
-#   1. REDUCTIONS, below, is authored. It says what each contour becomes at
-#      each shorter length. It preserves meaning but cannot guarantee
-#      distinctness, because distinctness is a property of a family rather
-#      than of a contour.
-#   2. Register separation, in plan_family(), guarantees distinctness. Where
-#      two cues still land on the same shape it moves one of them to a
-#      different register -- upward for a rising cue, downward for a falling
-#      one, so the nudge reinforces the meaning instead of fighting it.
-#
-# At one note there is only one possible shape, so mechanism 1 has nothing
-# to offer and mechanism 2 does all the work. That is exactly the argument
-# in --notes for why single-note families are weaker: register is all that
-# is left to carry meaning.
-# ---------------------------------------------------------------------------
+# Shortening a family happens in two stages. REDUCTIONS supplies a shape
+# of the requested length per contour; plan_family() then separates any
+# cues that still collide by moving them into a free register.
 
-#: What each contour is *for*. Drives which way a nudged cue moves, and
-#: nothing else. Every contour in CONTOURS must appear here; a test checks.
+#: Contour intent. Read only to pick a nudge direction. Every key of
+#: CONTOURS must appear here; a test enforces it.
 CONTOUR_CHARACTER: dict[str, str] = {
     "rise2": "rise", "rise3": "rise", "rise_hold": "rise", "rise4": "rise",
     "leap_up": "rise", "whistle_up": "rise", "scan": "rise",
@@ -652,42 +533,32 @@ CONTOUR_CHARACTER: dict[str, str] = {
     "alarm_trill": "chatter",
 }
 
-#: Which way to look for a free register when two cues collide. A rising
-#: cue that has to move goes up.
+#: Nudge direction per contour intent.
 NUDGE_DIRECTION: dict[str, int] = {
     "rise": +1, "updown": +1, "chatter": +1,
     "fall": -1, "downup": -1,
     "level": +1,
 }
 
-#: Purpose-built shapes for contours asked to be shorter than they are.
-#: A missing length falls back to truncation, which is right for the cases
-#: where the opening genuinely is the whole idea (`leap_up` at two notes is
-#: already `leap_up`). Length 1 is never authored: it is always a single
-#: note, and register does the work.
+#: Replacement shapes per contour, keyed by requested length. A missing
+#: length falls back to truncation; length 1 is always a single note.
 REDUCTIONS: dict[str, dict[int, list[int]]] = {
-    # Three rising cues that must stay distinguishable, so they reduce to
-    # three different sizes of rise rather than all to [0, 2].
+    # Three different sizes of rise, so these stay distinguishable.
     "rise3": {2: [0, 4]},
     "rise_hold": {2: [0, 1]},
     "rise4": {3: [0, 2, 4], 2: [0, 5]},
     "fall3": {2: [0, -4]},
     "fall4": {3: [0, -2, -4], 2: [0, -5]},
-    # The turning shapes keep their turn for as long as they have notes to
-    # spend on it, then keep their first move.
+    # Keep the turn while notes allow, then the first move only.
     "updown": {2: [0, 3]},
     "downup": {2: [0, -3]},
     "arch": {3: [0, 4, 0], 2: [0, 2]},
     "vee": {3: [0, -4, 0], 2: [0, -2]},
-    # Ends high, because that is the half of "up, back, up again" that
-    # carries the meaning. [0, 2, 0] would end where it started, which is
-    # a different cue wearing the same name.
+    # Must end high; [0, 2, 0] would end where it started.
     "double_rise": {3: [0, 0, 2], 2: [0, 2]},
     "query": {3: [0, 3, 6], 2: [0, 6]},
     "level3": {2: [0, 0]},
-    # The long droid material thins out rather than being cut off, so a
-    # shortened chatter still reads as chatter instead of as a two-note
-    # motif that happens to start the same way.
+    # Thinned rather than cut, to keep the chattering character.
     "scan": {5: [0, 1, 2, 3, 5], 4: [0, 2, 3, 5], 3: [0, 2, 5], 2: [0, 5]},
     "chatter5": {4: [0, 3, 1, 4], 3: [0, 3, 1], 2: [0, 3]},
     "chatter7": {6: [0, 4, 1, 5, 2, 6], 5: [0, 4, 1, 5, 3], 4: [0, 4, 1, 5],
@@ -702,15 +573,10 @@ CAP_MODES = ("redesign", "truncate")
 
 @dataclass
 class PitchContext:
-    """Everything needed to turn a placement into actual frequencies.
+    """Inputs needed to turn a placement into frequencies.
 
-    Register separation is meaningless without this. Two cues four scale
-    degrees apart look separated on paper and can still come out as the
-    same sound, because fit_to_range folds every motif into the band by
-    whole octaves: with a five-note scale and a band a little over an
-    octave wide, degrees 0 and 5 land on exactly the same frequency.
-    Separation therefore has to be judged on the pitches that actually
-    come out, not on the degrees that went in.
+    Required for collision checks: fit_to_range folds motifs into the band
+    by whole octaves, so distinct scale degrees can yield one frequency.
     """
     root_hz: float
     scale: list[int]
@@ -724,13 +590,13 @@ class Placement:
     spec: EarconSpec
     degrees: list[int]
     root_offset: int
-    #: True when no free register could be found -- the band is full. The
-    #: cue still renders; it just is not unique.
+    #: Set when no free register was available. The cue still renders,
+    #: but is not unique.
     unresolved: bool = False
 
     @property
     def moved(self) -> bool:
-        """Whether register separation had to move this cue."""
+        """Whether separation moved this cue off its declared register."""
         return self.root_offset != self.spec.root_offset
 
     @property
@@ -744,19 +610,14 @@ class Placement:
             [scale_freq(pitch.root_hz, pitch.scale, d) for d in degrees],
             pitch.floor, pitch.ceiling,
         )
-        # Rounded so that two motifs differing by floating-point noise are
-        # correctly treated as the same sound.
+        # Rounded so float noise does not read as a distinct pitch.
         return tuple(round(f, 4) for f in freqs)
 
     def in_band(self, pitch: PitchContext) -> bool:
-        """Whether every note actually landed inside the band.
+        """Whether every note landed inside the band.
 
-        fit_to_range gives up after six octave shifts, so a sufficiently
-        extreme register comes back out of band rather than folded. Those
-        results look distinct and are useless: they are exactly the
-        shrillness the band exists to prevent. Register separation has to
-        rule them out, or a search for a free slot will happily walk off
-        the top of the band and report success.
+        fit_to_range stops after six octave shifts, so an extreme register
+        returns unfolded and out of band. Separation must reject those.
         """
         freqs = self.frequencies(pitch)
         tolerance = 1e-6
@@ -771,12 +632,9 @@ def effective_cap(spec: EarconSpec, note_count: int | None) -> int | None:
 
 
 def capped_contour(spec: EarconSpec, note_count: int | None) -> list[int]:
-    """Truncate a contour to at most N notes.
+    """Truncate a contour to at most N notes, used by --cap-mode truncate.
 
-    The blunt instrument, reached for by `--cap-mode truncate`. `rise3` at
-    N=2 is the first two notes of `rise3`, so a family shortened this way
-    keeps its openings intact and loses the cues that differ only after the
-    cut point.
+    Keeps each opening intact; cues differing only after the cut collide.
     """
     contour = CONTOURS[spec.contour]
     cap = effective_cap(spec, note_count)
@@ -784,10 +642,10 @@ def capped_contour(spec: EarconSpec, note_count: int | None) -> list[int]:
 
 
 def reduced_contour(spec: EarconSpec, note_count: int | None) -> list[int]:
-    """Shorten a contour to N notes, preserving what it means.
+    """Shorten a contour to N notes via REDUCTIONS.
 
-    Uses the authored shape for that contour at that length where one
-    exists, a single note at length 1, and truncation otherwise.
+    Falls back to a single note at length 1, and to truncation when the
+    table has no entry for that contour and length.
     """
     contour = CONTOURS[spec.contour]
     cap = effective_cap(spec, note_count)
@@ -800,12 +658,9 @@ def reduced_contour(spec: EarconSpec, note_count: int | None) -> list[int]:
 
 
 def distinct_pitch_capacity(pitch: PitchContext) -> int:
-    """How many distinguishable single notes this band and scale provide.
+    """Count the distinct in-band pitches this band and scale yield.
 
-    The hard ceiling on a one-note family. A 480-1150 Hz band is a little
-    over an octave, and a pentatonic has five notes per octave, so the
-    answer is usually five or six -- which is why an eight-cue family
-    cannot survive `-n 1` intact no matter how cleverly it is arranged.
+    The ceiling on how many one-note cues a family can hold.
     """
     seen = set()
     for degree in range(-60, 61):
@@ -821,17 +676,11 @@ def distinct_pitch_capacity(pitch: PitchContext) -> int:
 def plan_family(specs: list[EarconSpec], note_count: int | None = None,
                 cap_mode: str = "redesign",
                 pitch: PitchContext | None = None) -> list[Placement]:
-    """Work out the final shape and register of every cue in a family.
+    """Resolve the final shape and register of every cue in a family.
 
-    With no cap this is the identity: each cue keeps its declared contour
-    and register, which is what makes an uncapped family bit-for-bit what
-    it has always been.
-
-    With a cap in redesign mode, contours are reduced and then any two cues
-    that still collide are separated by register. The cue that moves is the
-    later one in declaration order, and it moves in the direction its
-    character implies, so a rising cue that has to give way ends up higher
-    rather than in an arbitrary spot.
+    Without a cap this is the identity. With one, contours are shortened
+    and colliding cues separated by register; the later cue in declaration
+    order is the one that moves.
     """
     if cap_mode not in CAP_MODES:
         raise ValueError(f"Unknown cap mode {cap_mode!r}; expected one of {CAP_MODES}.")
@@ -840,35 +689,30 @@ def plan_family(specs: list[EarconSpec], note_count: int | None = None,
     plans = [Placement(spec, list(shorten(spec, note_count)), spec.root_offset)
              for spec in specs]
 
-    # An uncapped family is left exactly as declared. Anything else would
-    # let this function change output that has never asked to be changed.
+    # Uncapped families are returned as declared.
     if not any(effective_cap(spec, note_count) for spec in specs):
         return plans
 
     if cap_mode == "truncate":
-        # Truncation is chosen deliberately for its bluntness; silently
-        # repairing it would take away the thing being asked for. main()
-        # reports the collisions instead.
+        # No separation in this mode; main() reports the collisions.
         return plans
 
-    # What counts as "the same cue". With pitch context this is the actual
-    # sounding frequencies, which is the only test that means anything;
-    # without it, the shape and register are the best available proxy.
+    # Sounding frequencies where pitch context allows, otherwise shape
+    # and register as a proxy.
     def signature(plan: Placement):
         if pitch is not None:
             return plan.frequencies(pitch)
         return (tuple(plan.degrees), plan.root_offset)
 
     def probe(plan: Placement, offset: int):
-        """The signature a cue would have at `offset`, or None if that
-        register puts it outside the band."""
+        """Signature at `offset`, or None if that register is out of band."""
         trial = Placement(plan.spec, plan.degrees, offset)
         if pitch is not None and not trial.in_band(pitch):
             return None
         return signature(trial)
 
-    # Every declared placement is reserved before anything moves, so a cue
-    # is never nudged onto a register that a later cue is about to claim.
+    # Declared placements are reserved up front, so no cue is nudged onto
+    # a register a later cue will claim.
     reserved = {signature(p) for p in plans}
     taken: set = set()
 
@@ -880,14 +724,9 @@ def plan_family(specs: list[EarconSpec], note_count: int | None = None,
         direction = NUDGE_DIRECTION.get(
             CONTOUR_CHARACTER.get(plan.spec.contour, "level"), +1
         )
-        # The cue's own direction is searched to exhaustion before the
-        # other one is tried at all. Sweeping outward by distance instead
-        # would let a rising cue settle one step below its neighbour
-        # rather than four steps above it, which reads as the wrong cue.
-        #
-        # The range is generous because a fold-limited band repeats every
-        # few degrees: the search is looking for a genuinely new sound,
-        # not merely a new number.
+        # The cue's own direction is exhausted before the other is tried.
+        # The range is wide because band folding repeats every few
+        # degrees, so many offsets resolve to a pitch already taken.
         found = False
         for sign in (direction, -direction):
             for distance in range(1, 64):
@@ -902,8 +741,6 @@ def plan_family(specs: list[EarconSpec], note_count: int | None = None,
             if found:
                 break
 
-        # Nothing free anywhere. The band is full; the cue renders as a
-        # duplicate and says so rather than pretending otherwise.
         plan.unresolved = not found
         taken.add(signature(plan))
 
@@ -911,7 +748,7 @@ def plan_family(specs: list[EarconSpec], note_count: int | None = None,
 
 
 def scale_freq(root_hz: float, scale: list[int], degree: int) -> float:
-    """Map a (possibly negative, possibly out-of-octave) scale degree to Hz."""
+    """Map a scale degree, possibly negative or beyond one octave, to Hz."""
     span = len(scale)
     octave = degree // span
     idx = degree % span
@@ -920,10 +757,10 @@ def scale_freq(root_hz: float, scale: list[int], degree: int) -> float:
 
 
 def fit_to_range(freqs: list[float], floor: float, ceiling: float) -> list[float]:
-    """Transpose the whole motif by octaves until it fits the band.
+    """Transpose the motif by whole octaves until it fits the band.
 
-    Transposing as a unit preserves the interval structure, which is what
-    makes the motif recognisable.
+    Shifted as a unit, so the interval structure survives. Gives up after
+    six shifts and returns the motif unfolded.
     """
     if not freqs:
         return freqs
@@ -952,8 +789,7 @@ def render_earcon(
     tail_ms: float,
     release_ms: float,
 ) -> np.ndarray:
-    """Render one cue. Shape and register are already settled by
-    plan_family(); everything left is timbre, timing and level."""
+    """Render one cue from a placement settled by plan_family()."""
     spec = plan.spec
     nm = spec.note_ms if spec.note_ms is not None else note_ms
     gm = spec.gap_ms if spec.gap_ms is not None else gap_ms
@@ -970,14 +806,12 @@ def render_earcon(
     buf = np.zeros(total)
     for i, f in enumerate(freqs):
         start = i * step_n
-        # Render each note all the way to the end of the buffer. The tail
-        # is genuine ring-out, not appended silence, so no note is ever
-        # cut off mid-oscillation.
+        # Rendered to the end of the buffer, so the tail is ring-out
+        # rather than silence and no note is cut mid-oscillation.
         buf[start:] += render_note(f, voice, nm, total - start,
                                    prev_freq=freqs[i - 1] if i else None)
 
-    # A-weighted normalisation: this is why a 500 Hz and a 1 kHz earcon
-    # in the same family actually sound equally loud.
+    # A-weighted, so cues at different pitches match in loudness.
     rms = a_weighted_rms(buf)
     if rms > 1e-9:
         buf *= (target_rms / rms)
@@ -987,10 +821,8 @@ def render_earcon(
     if peak > peak_ceiling:
         buf *= (peak_ceiling / peak)
 
-    # Raised-cosine release on the summed buffer. Continuous in value AND
-    # first derivative, unlike a linear fade -- the residual ring-out is
-    # brought to true zero without a step. This is the fix for the
-    # end-of-file pop; a linear ramp here is audible, a cosine one is not.
+    # Raised-cosine release over the summed buffer. Continuous in value
+    # and first derivative, so the ring-out reaches zero without a step.
     rel_n = min(int(SR * release_ms / 1000.0), buf.size)
     if rel_n > 1:
         buf[-rel_n:] *= 0.5 * (1.0 + np.cos(np.pi * np.arange(rel_n) / (rel_n - 1)))
@@ -1012,7 +844,7 @@ def write_wav(path: Path, sig: np.ndarray, stereo: bool = False) -> None:
 
 
 def play(path: Path) -> None:
-    """Best-effort local audition. Falls through quietly if nothing is present."""
+    """Play a file with the first available system player, if any."""
     if sys.platform == "darwin" and shutil.which("afplay"):
         subprocess.run(["afplay", str(path)], check=False)
         return
@@ -1102,8 +934,8 @@ off at 200 ms, a context where anything longer reads as slow.
 On the droid presets
 --------------------
 
---r2 and --r2-full break several of the rules above on purpose. Real
-astromech vocalisations are ring-modulated, glide between pitches, warble,
+--r2 and --r2-full break several of the rules above on purpose. Droid
+vocalisations are ring-modulated, glide between pitches, warble,
 and run to six or seven blips; --r2-full also goes chromatic and up into
 the 2-4 kHz band this tool otherwise avoids. That combination is
 expressive and characterful and is a poor choice for a cue that fires
@@ -1139,7 +971,7 @@ problem.
 
 @dataclass
 class Rendered:
-    """One written file, as reported back to whoever asked for the render."""
+    """One written file, reported back by generate_family()."""
     path: Path
     duration: float
     spec: EarconSpec
@@ -1147,11 +979,10 @@ class Rendered:
 
 
 def explicit_dests(parser: argparse.ArgumentParser, argv: list[str]) -> set[str]:
-    """Which options the user actually typed, regardless of their values.
+    """Dests whose options appear in `argv`, whatever their values.
 
-    Presets need this. Checking `args.x == default` cannot distinguish
-    "left alone" from "set to the default on purpose", and getting that
-    wrong means a preset silently overrides an explicit flag.
+    Comparing against defaults cannot separate "unset" from "set to the
+    default", so apply_preset() matches on argv instead.
     """
     given: set[str] = set()
     for action in parser._actions:
@@ -1165,17 +996,10 @@ def degenerate_groups(family: list[EarconSpec],
                       note_count: int | None,
                       pitch: PitchContext | None = None,
                       cap_mode: str = "truncate") -> list[list[str]]:
-    """Cues a note cap has rendered indistinguishable from each other.
+    """Group slugs a note cap has made indistinguishable.
 
-    Given a PitchContext this compares the pitches that actually come out,
-    which is the only comparison that means anything: two motifs four
-    scale degrees apart can still be the same sound once fit_to_range has
-    folded them into the band. Without one it falls back to comparing
-    shapes and registers, which is a reasonable proxy and no more.
-
-    Writing two identical WAVs under different names is the kind of thing
-    you discover months later, so it gets said out loud at generation
-    time rather than left to be noticed.
+    Compares sounding frequencies when `pitch` is given, otherwise shape
+    and register.
     """
     if not note_count:
         return []
@@ -1193,11 +1017,10 @@ def degenerate_groups(family: list[EarconSpec],
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The command line, as a separate object.
+    """Build the argument parser.
 
-    The GUI reads defaults and choices from this rather than keeping its
-    own copy, so a bound or a default cannot be changed in one place and
-    quietly disagree with the other.
+    Separate from main() because the GUI reads its defaults and choices
+    from here instead of duplicating them.
     """
     p = argparse.ArgumentParser(
         description="Generate a family of related earcons.",
@@ -1206,8 +1029,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default="audio/chime", help="output directory")
     p.add_argument("--voice", default="chime", choices=sorted(VOICES), help="timbre")
     p.add_argument("--family", default="core", choices=FAMILY_NAMES,
-                   help="which set of cues to generate (default core, the "
-                        "original eight); see --list-families")
+                   help="which set of cues to generate; see --list-families")
     p.add_argument("-n", "--note-count", type=int, default=None, metavar="N",
                    help="cap every motif at N notes; see --cap-mode")
     p.add_argument("--cap-mode", default="redesign", choices=list(CAP_MODES),
@@ -1310,7 +1132,7 @@ def pitch_context(args: argparse.Namespace,
 
 
 def resolve_specs(args: argparse.Namespace) -> list[EarconSpec]:
-    """The cues to render: a spec file if given, otherwise a family."""
+    """Specs from --spec if given, otherwise from --family."""
     spec_file = getattr(args, "spec", None)
     if spec_file:
         raw = json.loads(Path(spec_file).read_text())
@@ -1320,11 +1142,9 @@ def resolve_specs(args: argparse.Namespace) -> list[EarconSpec]:
 
 def generate_family(args: argparse.Namespace,
                     on_file=None) -> list[Rendered]:
-    """Render and write every cue, reporting each file as it lands.
+    """Render and write every cue, calling `on_file` after each one.
 
-    This is the one rendering path. The CLI prints from `on_file`, the
-    GUI updates a progress bar and a list from it; neither reimplements
-    the resolution rules, which is what stops them diverging.
+    The single rendering path for both the CLI and the GUI.
     """
     voice = resolve_voice(args)
     specs = resolve_specs(args)

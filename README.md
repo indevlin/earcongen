@@ -91,7 +91,7 @@ the whole project rather than just the interface.
 # Shorten every motif (see "Shortening motifs" below for the catch)
 ./earcongen.py -n 2 --out audio/short
 
-# Astromech presets
+# Droid presets
 ./earcongen.py --r2 --out audio/r2            # in-band, still well behaved
 ./earcongen.py --r2-full --out audio/r2-full  # chromatic, wide, unrepentant
 
@@ -361,7 +361,7 @@ versions.
 | `system` | 8 | machine state — boot, connect, update, battery, job done |
 | `message` | 5 | interruptions from people — incoming, sent, mention, call |
 | `progress` | 5 | long operations — start, tick, complete, stalled, abort |
-| `droid` | 8 | astromech vocabulary — affirm, negate, query, scan, alert |
+| `droid` | 8 | droid vocabulary — affirm, negate, query, scan, alert |
 | `droid_full` | 8 | the same slugs with longer, wilder phrasing |
 | `all` | 34 | every non-droid cue at once, for auditioning |
 
@@ -387,19 +387,18 @@ with a wooden timbre, exactly as it reads.
 ./earcongen.py --list-presets
 ```
 
-Both presets deliberately break rules stated above. Astromech
-vocalisations are ring-modulated, glide between pitches, warble, and run
-to six or seven blips; `--r2-full` additionally goes chromatic and climbs
-into the 2–4 kHz band this tool otherwise avoids. That is expressive, and
-it is a bad choice for a cue that fires forty times a day.
+Both presets deliberately break rules stated above. Droid vocalisations
+are ring-modulated, glide between pitches, warble, and run to six or
+seven blips; `--r2-full` additionally goes chromatic and climbs into the
+2–4 kHz band this tool otherwise avoids. That is expressive, and it is a
+bad choice for a cue that fires forty times a day.
 
 `--r2` is the version that still behaves: in-band, pentatonic, phrases
 capped where a notification sound should be capped. `--r2-full` is for
 when character is the point and listener fatigue is not your problem.
 
-The synthesis is original — three new modulation parameters on the voice,
-no samples involved. The sounds are astromech *in the sense that a
-ring-modulated glide is*, not in the sense of reproducing anything.
+The synthesis is original: five modulation parameters on the voice, no
+samples involved.
 
 Ring modulation drives the signal through zero at the difference
 frequency, which looks like an envelope discontinuity to the checker.

@@ -18,6 +18,20 @@ format**. The `core` family's output is pinned by SHA-256 in
 `tests/test_earcongen.py`; any release that changes those hashes changes
 what users hear, and will say so here.
 
+## [20261106]
+
+### Changed
+- **The release is cut with `gh` instead of a third-party action.**
+  `indevlin` permits only actions owned by the organisation or authored
+  by GitHub, which rejected `softprops/action-gh-release`. `gh release
+  create` ships on every GitHub-hosted runner and needs no allowlist
+  entry. A re-run now edits the existing release and uploads with
+  `--clobber` rather than failing. Every remaining `uses:` is an
+  `actions/*` step.
+- **Comments and docstrings trimmed throughout.** Reduced to how the code
+  works; design rationale and cross-project references removed. No
+  behaviour change — the `core` family's SHA-256 hashes are unchanged.
+
 ## [20260908]
 
 First release. Everything below is new.
@@ -36,7 +50,7 @@ First release. Everything below is new.
   but never confusable, normalised so they sound equally loud.
 - **Ten voices.** `bell`, `chime`, `marimba`, `glass`, `pluck`, `alert`,
   `alarm` and a deliberately plain `sine` reference, plus the two
-  astromech voices below. Each is a table of partial ratios, amplitudes
+  droid voices below. Each is a table of partial ratios, amplitudes
   and per-partial decay rates, so adding one is a five-line change.
 - **A catalogue of cue sets, chosen with `--family`.** `core` is the
   generic eight. `ui`, `system`, `message` and `progress` are curated for
@@ -70,7 +84,7 @@ First release. Everything below is new.
   the cues it could not place, states the capacity, and suggests widening
   the band, raising the cap, or shipping fewer cues. Widening to
   300–2400 Hz gives fifteen pitches and all eight come out distinct.
-- **Presets, and the two astromech ones.** `--r2` is droid phrasing that
+- **Presets, and the two droid ones.** `--r2` is droid phrasing that
   still behaves like a notification set: in band, pentatonic, phrases
   capped where a notification sound should be capped. `--r2-full` is the
   unleashed version — chromatic, up into the 2–4 kHz band the tool
