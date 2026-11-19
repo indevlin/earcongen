@@ -296,25 +296,36 @@ jobs:
           VERSION="${{ needs.verify.outputs.version }}"
           STEM="${BINARY}-${VERSION}-${{ matrix.platform }}"
 
-          # Every archive carries the licence texts — LGPLv3 section 4(b)
-          # requires a copy to accompany the binary, and a link is not
-          # enough — and the two command-line tools, which need numpy alone
-          # and are the rest of the project.
-          EXTRAS="LICENSE THIRD-PARTY-NOTICES.md README.md USAGE.md \
-                  CHANGELOG.md earcongen.py earconcheck.py licenses"
+          # Licence texts, as LGPLv3 4(b) requires, plus the two
+          # command-line tools. An array, not a string: a quoted string
+          # keeps its continuation line's indentation, and substituting
+          # ./ for each space then yields one bare ./ argument per space.
+          EXTRAS=(LICENSE THIRD-PARTY-NOTICES.md README.md USAGE.md
+                  CHANGELOG.md earcongen.py earconcheck.py licenses)
 
           if [ "${RUNNER_OS}" = "Windows" ]; then
-            7z a "dist/${STEM}.zip" "./dist/${BINARY}.exe" ${EXTRAS// /' ./'}
-          elif [ "${RUNNER_OS}" = "macOS" ]; then
-            ditto -c -k --keepParent "dist/${BINARY}.app" \
-              "dist/${STEM}.zip" 2>/dev/null || \
-              tar -czf "dist/${STEM}.tar.gz" -C dist "${BINARY}" -C .. ${EXTRAS}
+            7z a "dist/${STEM}.zip" "./dist/${BINARY}.exe" \
+              "${EXTRAS[@]/#/./}"
+          elif [ "${RUNNER_OS}" = "macOS" ] && [ -d "dist/${BINARY}.app" ]; then
+            # Staged, so the bundle and the licence texts share one archive.
+            STAGE="$(mktemp -d)/${STEM}"
+            mkdir -p "$STAGE"
+            cp -R "dist/${BINARY}.app" "${EXTRAS[@]}" "$STAGE"/
+            ditto -c -k --keepParent "$STAGE" "dist/${STEM}.zip"
           else
-            tar -czf "dist/${STEM}.tar.gz" -C dist "${BINARY}" -C .. ${EXTRAS}
+            tar -czf "dist/${STEM}.tar.gz" \
+              -C dist "${BINARY}" -C .. "${EXTRAS[@]}"
           fi
 
           cd dist
-          for f in "${STEM}".*; do
+          shopt -s nullglob
+          ARCHIVES=("${STEM}".*)
+          shopt -u nullglob
+          if [ "${#ARCHIVES[@]}" -eq 0 ]; then
+            echo "::error::Packaging produced no ${STEM}.* archive."
+            exit 1
+          fi
+          for f in "${ARCHIVES[@]}"; do
             if command -v sha256sum >/dev/null; then
               sha256sum "$f" >> "SHA256SUMS-${STEM}.txt"
             else

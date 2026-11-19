@@ -186,7 +186,11 @@ EOF
       ART="dist/${STEM}.zip" ;;
     macos)
       if [ -d "${APPBUNDLE:-}" ] && command -v ditto >/dev/null 2>&1; then
-        ditto -c -k --keepParent "$APPBUNDLE" "dist/${STEM}.zip"
+        # Staged, so the bundle and the licence texts share one archive.
+        STAGE="$(mktemp -d)/${STEM}"
+        mkdir -p "$STAGE"
+        cp -R "$APPBUNDLE" "${EXTRAS[@]}" "$STAGE"/
+        ditto -c -k --keepParent "$STAGE" "dist/${STEM}.zip"
         ART="dist/${STEM}.zip"
       else
         tar -czf "dist/${STEM}.tar.gz" -C dist "$BINARY" -C .. "${EXTRAS[@]}"
