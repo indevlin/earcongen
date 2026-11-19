@@ -1,6 +1,9 @@
 """Tests for the graphical front end.
 
-Run under the offscreen platform plugin, so no display is needed.
+These run under the offscreen platform plugin, so they need no display and
+no xvfb. The value is mostly in the first two: they are what stops the GUI
+and the command line drifting apart, which is the failure this design was
+arranged to prevent and which no amount of clicking would reveal quickly.
 """
 
 from __future__ import annotations
@@ -31,9 +34,11 @@ def app():
 
 
 @pytest.fixture
-def window(app, tmp_path, monkeypatch):
-    # gui.app calls these through the module, so patching here keeps a
-    # test run out of the real settings file.
+def window(app, require_multimedia, tmp_path, monkeypatch):
+    # require_multimedia skips these rather than letting MainWindow build
+    # a Player and abort inside QtMultimedia.
+    # Redirected so a test run cannot overwrite a real user's settings.
+    # gui.app calls these through the module, so patching here reaches it.
     from gui import paths as gui_paths
 
     monkeypatch.setattr(gui_paths, "config_dir", lambda: tmp_path / "config")
@@ -48,10 +53,13 @@ def window(app, tmp_path, monkeypatch):
     win.close()
 
 
-# Agreement between the GUI and the parser
+# --------------------------------------------------------------------------
+# The GUI and the CLI must agree
+# --------------------------------------------------------------------------
 
 def test_every_gui_setting_is_a_real_cli_option():
-    """A control for an unknown option would be silently ignored."""
+    """A control for an option earcongen does not have would be ignored
+    silently, which is worse than a crash."""
     for key in params.ALL_PARAMS:
         assert key in params.CLI_DEFAULTS, key
 
@@ -66,12 +74,14 @@ def test_choice_controls_offer_exactly_the_cli_choices():
 def test_defaults_come_from_the_parser_not_a_copy():
     assert params.ALL_PARAMS["root"].default == 523.25
     assert params.ALL_PARAMS["gap_ms"].default == 150.0
-    # None leaves the "defer to the voice" checkbox unticked.
+    # Optional settings default to None, which is what makes the
+    # "use the voice's own value" checkbox start unticked.
     assert params.ALL_PARAMS["attack_ms"].default is None
 
 
 def test_defaults_sit_inside_their_slider_bounds():
-    """A default outside its bounds would be clamped on display."""
+    """A default outside its own bounds would be silently clamped, so the
+    form would open showing a value the tool would not actually use."""
     for key, param in params.ALL_PARAMS.items():
         if param.kind not in ("float", "int"):
             continue
@@ -81,7 +91,8 @@ def test_defaults_sit_inside_their_slider_bounds():
 
 
 def test_preset_values_are_all_controllable():
-    """Every setting a preset moves must have a control."""
+    """Every setting a preset moves must have a control, or the preset
+    would change something the user cannot see."""
     for name in earcongen.PRESETS:
         cfg = earcongen.PRESETS[name]
         controllable = set(params.preset_values(name))
@@ -94,14 +105,17 @@ def test_every_param_has_a_real_tooltip():
         assert len(param.tooltip) > 80, key
 
 
+# --------------------------------------------------------------------------
 # Preset behaviour
+# --------------------------------------------------------------------------
 
 def test_choosing_a_preset_shows_its_values_and_locks_them(window):
     window.preset_combo.setCurrentText("r2-full")
     assert window.controls["voice"].value == "droid_wild"
     assert window.controls["scale"].value == "chromatic"
     assert window.controls["ceiling"].value == 3200.0
-    # Visible but not editable.
+    # Visible but not editable: the point is that the user can read what
+    # the preset did.
     assert not window.controls["voice"].combo.isEnabled()
     assert not window.controls["ceiling"].slider.isEnabled()
 
@@ -125,14 +139,17 @@ def test_baseline_loads_a_preset_without_locking(window):
 
 
 def test_preset_resets_settings_it_does_not_mention(window):
-    """Otherwise a preset inherits the previous selection's values."""
+    """Otherwise a preset inherits whatever the previous experiment left
+    behind, and no two runs of the same preset match."""
     window.preset_combo.setCurrentText(params.CUSTOM)
     window.controls["gain"].set_value(1.9)
     window.preset_combo.setCurrentText("r2")
     assert window.controls["gain"].value == params.ALL_PARAMS["gain"].default
 
 
+# --------------------------------------------------------------------------
 # Controls
+# --------------------------------------------------------------------------
 
 def test_optional_control_reports_none_when_unticked(window):
     control = window.controls["attack_ms"]
@@ -156,7 +173,9 @@ def test_out_of_range_preset_value_is_clamped_not_dropped(window):
     assert control.value == params.ALL_PARAMS["ceiling"].maximum
 
 
+# --------------------------------------------------------------------------
 # Destination and rendering
+# --------------------------------------------------------------------------
 
 def test_subfolder_cannot_escape_the_base_directory(window, tmp_path):
     window.base_dir_edit.setText(str(tmp_path))
@@ -170,7 +189,8 @@ def test_build_args_matches_the_parser(window, tmp_path):
     args = window.build_args()
 
     reference = earcongen.build_parser().parse_args([])
-    # Every parser attribute must be present before a render reads it.
+    # Every attribute the parser knows about is present, so nothing can be
+    # missing when a render reads it.
     for key in vars(reference):
         assert hasattr(args, key), key
     assert args.voice == "droid"
