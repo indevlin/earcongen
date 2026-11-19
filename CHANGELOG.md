@@ -18,19 +18,43 @@ format**. The `core` family's output is pinned by SHA-256 in
 `tests/test_earcongen.py`; any release that changes those hashes changes
 what users hear, and will say so here.
 
-## [20261106]
+## [20261118]
+
+First tagged release. `20261106` was set in the `version` file but never
+published: its workflow run failed before the release job.
+
+No change to the audio. The `core` family's SHA-256 hashes in
+`tests/test_earcongen.py` are unchanged from 20260908.
+
+### Fixed
+
+- **`pytest -q tests` could not import `earcongen`.** pytest puts the
+  test file's own directory on `sys.path`, not the repository root, and
+  bare `pytest` does not add the working directory either -- only
+  `python -m pytest` does. `tests/test_gui.py` inserts the root itself
+  and was unaffected; `tests/test_earcongen.py` does not, and failed
+  collection under the release workflow. A new `pytest.ini` sets
+  `pythonpath`, which also pins `rootdir`, so the suite runs from any
+  directory.
+- **The GUI tests ended the whole run where QtMultimedia cannot
+  initialise.** `MainWindow` builds a `Player`, and
+  `QMediaDevices.audioOutputs()` aborts with SIGSEGV rather than raising
+  on a host with no usable audio stack -- a headless runner with no sound
+  server, or a partial PipeWire install missing `client.conf`.
+  `tests/conftest.py` probes QtMultimedia in a subprocess, since an
+  in-process check cannot survive the abort, and `require_multimedia`
+  skips the eleven window tests when it fails. Where QtMultimedia works,
+  they run as before.
 
 ### Changed
-- **The release is cut with `gh` instead of a third-party action.**
-  `indevlin` permits only actions owned by the organisation or authored
-  by GitHub, which rejected `softprops/action-gh-release`. `gh release
-  create` ships on every GitHub-hosted runner and needs no allowlist
-  entry. A re-run now edits the existing release and uploads with
-  `--clobber` rather than failing. Every remaining `uses:` is an
-  `actions/*` step.
-- **Comments and docstrings trimmed throughout.** Reduced to how the code
-  works; design rationale and cross-project references removed. No
-  behaviour change — the `core` family's SHA-256 hashes are unchanged.
+
+- **Releases are cut with `gh` instead of a third-party action.** The
+  `indevlin` organisation permits only actions owned by the organisation
+  or authored by GitHub, which rejected `softprops/action-gh-release@v2`.
+  `gh release create` ships on every GitHub-hosted runner and needs no
+  allowlist entry. A re-run now edits the existing release and uploads
+  with `--clobber` rather than failing on the second attempt. Every
+  remaining `uses:` is an `actions/*` step.
 
 ## [20260908]
 
@@ -50,7 +74,7 @@ First release. Everything below is new.
   but never confusable, normalised so they sound equally loud.
 - **Ten voices.** `bell`, `chime`, `marimba`, `glass`, `pluck`, `alert`,
   `alarm` and a deliberately plain `sine` reference, plus the two
-  droid voices below. Each is a table of partial ratios, amplitudes
+  astromech voices below. Each is a table of partial ratios, amplitudes
   and per-partial decay rates, so adding one is a five-line change.
 - **A catalogue of cue sets, chosen with `--family`.** `core` is the
   generic eight. `ui`, `system`, `message` and `progress` are curated for
@@ -84,7 +108,7 @@ First release. Everything below is new.
   the cues it could not place, states the capacity, and suggests widening
   the band, raising the cap, or shipping fewer cues. Widening to
   300–2400 Hz gives fifteen pitches and all eight come out distinct.
-- **Presets, and the two droid ones.** `--r2` is droid phrasing that
+- **Presets, and the two astromech ones.** `--r2` is droid phrasing that
   still behaves like a notification set: in band, pentatonic, phrases
   capped where a notification sound should be capped. `--r2-full` is the
   unleashed version — chromatic, up into the 2–4 kHz band the tool
